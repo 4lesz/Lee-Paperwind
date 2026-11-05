@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http: localfile:; connect-src 'self' ws: localfile:" />
+    <title>Markdown 记事本</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 统一标题栏：系统标题栏 + 工具栏合一 -->
+      <header class="titlebar">
+        <div class="titlebar-side left">
+          <button class="icon-btn" data-cmd="outline" data-tip="侧栏" data-key="Ctrl+\"></button>
+          <span class="tb-gap"></span>
+          <button class="icon-btn" data-cmd="new" data-tip="新建" data-key="Ctrl+N"></button>
+          <button class="icon-btn" data-cmd="open" data-tip="打开…（右键可打开文件夹）" data-key="Ctrl+O"></button>
+          <button class="icon-btn" data-cmd="save" data-tip="保存" data-key="Ctrl+S"></button>
+        </div>
+        <div class="titlebar-center">
+          <span id="docName">未命名.md</span>
+          <span id="dirtyDot" class="dirty-dot" hidden></span>
+        </div>
+        <div class="titlebar-side right">
+          <span id="modeSlot"></span>
+          <span class="tb-gap"></span>
+          <button class="icon-btn" data-cmd="source" data-tip="源码模式" data-key="Ctrl+/"></button>
+          <button class="icon-btn" data-cmd="theme" data-tip="深色/浅色" data-key="Ctrl+Shift+L"></button>
+        </div>
+      </header>
+
+      <div class="body">
+        <aside class="sidebar" id="sidebar">
+          <div class="side-switch" id="sideSlot"></div>
+          <div class="side-panel" id="filesPanel">
+            <ul id="filesList"></ul>
+            <div class="folder-foot" id="folderFoot"></div>
+          </div>
+          <div class="side-panel" id="outlinePanel">
+            <ul id="outlineList"></ul>
+          </div>
+        </aside>
+
+        <main class="sheet">
+          <div class="scroller" id="paper">
+            <div class="formatbar-wrap"><nav class="formatbar" id="toolbar"></nav></div>
+            <div id="bannerSlot"></div>
+            <div id="editor"></div>
+            <div class="scroll-tail" id="scrollTail"></div>
+            <textarea id="source" spellcheck="false" hidden></textarea>
+          </div>
+          <!-- 上一篇 / 下一篇：固定在窗口底部（设计规范 §4.13 v1.4） -->
+          <nav class="pager" id="pager" aria-label="上一篇和下一篇"></nav>
+          <div class="wordcount" id="stats"></div>
+          <div class="drop-hint" id="dropHint">
+            <div class="drop-box"><span class="drop-icon"></span>松开以打开</div>
+          </div>
+        </main>
+      </div>
+
+      <div class="bubble" id="bubble"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
