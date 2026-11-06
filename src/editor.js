@@ -1,4 +1,4 @@
-import { Editor, Extension } from '@tiptap/core'
+import { Editor, Extension, findChildren } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Strike from '@tiptap/extension-strike'
 import Highlight from '@tiptap/extension-highlight'
@@ -13,7 +13,9 @@ import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import Image from '@tiptap/extension-image'
 import BubbleMenu from '@tiptap/extension-bubble-menu'
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import CodeBlock from '@tiptap/extension-code-block'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { createLowlight, common } from 'lowlight'
 import { Markdown } from 'tiptap-markdown'
 import markdownItMark from 'markdown-it-mark'
@@ -31,10 +33,24 @@ import powershell from 'highlight.js/lib/languages/powershell'
 export const lowlight = createLowlight(common)
 lowlight.register({ powershell })
 
+// 代码高亮的缓存：Tiptap 的代码块插件在「光标在代码块里」时每次改动都会重新高亮整篇所有代码块，
+// 1MB 文档里每按一次键要多花约 140ms。同样的「语言 + 代码」直接复用上次的结果。
+// 键里只放语言和代码，代码变了自然换一条；超过 2000 条整体清空，避免一直涨。
+const highlightCache = new Map()
+const highlightCached = (language, code) => {
+  const key = language + '\u0000' + code
+  const hit = highlightCache.get(key)
+  if (hit) return hit
+  const out = lowlight.highlight(language, code)
+  if (highlightCache.size > 2000) highlightCache.clear()
+  highlightCache.set(key, out)
+  return out
+}
+
 // 没标语言的代码块按纯文本显示，不自动猜测语言（避免「纯文本」却带颜色）
 const lowlightNoAuto = {
-  highlight: (...a) => lowlight.highlight(...a),
-  highlightAuto: (code) => lowlight.highlight('plaintext', code),
+  highlight: (language, code) => (language ? highlightCached(language, code) : lowlight.highlight('plaintext', code)),
+  highlightAuto: (code) => highlightCached('plaintext', code),
   listLanguages: () => lowlight.listLanguages(),
   registered: (name) => lowlight.registered(name),
 }
@@ -64,8 +80,90 @@ const StrikeX = Strike.extend({
 
 export { setDocDir, resolveImageSrc, isSafeHref }
 
+// 代码块高亮：只重算真正变化的代码块。
+// Tiptap 自带的实现只要光标在代码块里，每次按键都会把整篇所有代码块的装饰重建一遍，
+// 1MB 文档里每键多花约 140ms；这里改成按节点对象判断，只更新变动的那一块。
+const lowlightKey = new PluginKey('lowlight-cached')
+
+const highlightNodes = (result) => result.value || result.children || []
+const flattenNodes = (nodes, classes = []) =>
+  nodes
+    .map((n) => {
+      const cls = [...classes, ...((n.properties && n.properties.className) || [])]
+      if (n.children) return flattenNodes(n.children, cls)
+      return { text: n.value, classes: cls }
+    })
+    .flat()
+
+const codeDecorations = (blocks, lowlight, defaultLanguage) => {
+  const decorations = []
+  const known = (language) => {
+    if (!language) return false
+    const languages = lowlight.listLanguages()
+    return languages.includes(language) || lowlight.registered(language)
+  }
+  for (const block of blocks) {
+    let from = block.pos + 1
+    const language = block.node.attrs.language || defaultLanguage
+    // 没标语言或语言没注册（如 mermaid）时按纯文本处理，不自动猜语言
+    const nodes = language && known(language) ? lowlight.highlight(language, block.node.textContent) : lowlight.highlightAuto(block.node.textContent)
+    for (const n of flattenNodes(highlightNodes(nodes))) {
+      const to = from + n.text.length
+      if (n.classes.length) decorations.push(Decoration.inline(from, to, { class: n.classes.join(' ') }))
+      from = to
+    }
+  }
+  return decorations
+}
+
+const lowlightPlugin = (name, lowlight, defaultLanguage) => {
+  const all = (doc, blocks) => DecorationSet.create(doc, codeDecorations(blocks, lowlight, defaultLanguage))
+  const blocksOf = (doc) => findChildren(doc, (node) => node.type.name === name)
+  return new Plugin({
+    key: lowlightKey,
+    state: {
+      init: (_, { doc }) => all(doc, blocksOf(doc)),
+      apply(tr, old, oldState, newState) {
+        if (!tr.docChanged) return old
+        // 位置随改动平移；没变的代码块直接沿用原来的装饰
+        const mapped = old.map(tr.mapping, tr.doc)
+        const oldBlocks = blocksOf(oldState.doc)
+        const newBlocks = blocksOf(newState.doc)
+        if (oldBlocks.length !== newBlocks.length) return all(tr.doc, newBlocks)
+        const changed = []
+        for (let i = 0; i < newBlocks.length; i++) if (newBlocks[i].node !== oldBlocks[i].node) changed.push(i)
+        if (!changed.length) return mapped
+        if (changed.length > 8) return all(tr.doc, newBlocks) // 大面积变化（粘贴、整篇替换）直接重算
+        let set = mapped
+        for (const i of changed) {
+          const b = newBlocks[i]
+          const from = b.pos + 1
+          const to = b.pos + b.node.nodeSize - 1
+          set = set.remove(set.find(from, to))
+          set = set.add(tr.doc, codeDecorations([b], lowlight, defaultLanguage))
+        }
+        return set
+      },
+    },
+    props: {
+      decorations(state) {
+        return lowlightKey.getState(state)
+      },
+    },
+  })
+}
+
 // 代码块：在 <pre> 上标注语言，用于右上角显示语言名（设计规范 §5）
-const LabeledCodeBlock = CodeBlockLowlight.extend({
+const LabeledCodeBlock = CodeBlock.extend({
+  addOptions() {
+    return {
+      ...this.parent?.(),
+      lowlight: {},
+      languageClassPrefix: 'language-',
+      defaultLanguage: null,
+      HTMLAttributes: {},
+    }
+  },
   renderHTML({ node, HTMLAttributes }) {
     const lang = node.attrs.language
     return [
@@ -73,6 +171,9 @@ const LabeledCodeBlock = CodeBlockLowlight.extend({
       { ...this.options.HTMLAttributes, ...HTMLAttributes, 'data-language': lang || '' },
       ['code', { class: lang ? this.options.languageClassPrefix + lang : null }, 0],
     ]
+  },
+  addProseMirrorPlugins() {
+    return [...(this.parent?.() || []), lowlightPlugin(this.name, this.options.lowlight, this.options.defaultLanguage)]
   },
 })
 

@@ -1,7 +1,7 @@
 {
   "name": "markdown-app",
   "private": true,
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.4",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -9,6 +9,9 @@
     "start": "vite build && electron .",
     "dist": "vite build && electron-builder --win",
     "test": "vite build && electron scripts/selftest.cjs samples/示例.md test-output",
+    "perf": "vite build && node scripts/perf-run.cjs --modes=p01,p02,p04",
+    "perf:keys": "node scripts/perf-run.cjs --modes=p03",
+    "perf:all": "vite build && node scripts/perf-run.cjs --modes=p01,p02,p03,p04,p05 --minutes=30",
     "screenshot": "vite build && electron scripts/screenshot.cjs samples/示例.md test-output/real",
     "samples": "node scripts/make-samples.cjs",
     "icon": "electron scripts/make-icon.cjs"
@@ -16,6 +19,7 @@
   "devDependencies": {
     "@tiptap/core": "^2.27.3",
     "@tiptap/extension-bubble-menu": "^2.27.3",
+    "@tiptap/extension-code-block": "^2.27.3",
     "@tiptap/extension-code-block-lowlight": "^2.27.3",
     "@tiptap/extension-highlight": "^2.27.3",
     "@tiptap/extension-image": "^2.27.3",
@@ -81,7 +85,7 @@
           "mdown",
           "mkd"
         ],
-        "name": "Markdown",
+        "name": "MarkdownNotes.Document",
         "description": "Markdown 文档",
         "role": "Editor",
         "icon": "icon.ico"
