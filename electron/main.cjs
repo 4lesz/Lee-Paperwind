@@ -23,6 +23,29 @@ const overlayColors = (dark) => ({
 // 窗口关闭时，已经确认过可以关闭
 const allowClose = new Set()
 
+// 改名为 Paperwind（2026-11-06）：数据目录从 %APPDATA%\markdown-app 换成 %APPDATA%\Paperwind。
+// 第一次以新名字启动时，把草稿、阅读记录和界面偏好搬过来，旧目录原样保留不删。
+// 自测等脚本自己指定了数据目录时不搬（只在用的是默认目录时搬）。
+function migrateUserData() {
+  try {
+    const appData = app.getPath('appData')
+    const target = app.getPath('userData')
+    const legacy = path.join(appData, 'markdown-app')
+    const isDefault = target.toLowerCase() === path.join(appData, app.getName()).toLowerCase()
+    if (!isDefault || target.toLowerCase() === legacy.toLowerCase()) return
+    if (fsSync.existsSync(target) || !fsSync.existsSync(legacy)) return
+    fsSync.mkdirSync(target, { recursive: true })
+    for (const item of ['drafts', 'reading.json', 'Local Storage']) {
+      const from = path.join(legacy, item)
+      if (!fsSync.existsSync(from)) continue
+      try {
+        fsSync.cpSync(from, path.join(target, item), { recursive: true })
+      } catch {}
+    }
+  } catch {}
+}
+migrateUserData()
+
 protocol.registerSchemesAsPrivileged([
   { scheme: 'localfile', privileges: { supportFetchAPI: true, stream: true, bypassCSP: true } },
 ])
@@ -44,7 +67,7 @@ function createWindow(filePath = null) {
     minWidth: 680,
     minHeight: 460,
     show: false,
-    title: 'Markdown 记事本',
+    title: 'Paperwind',
     // 打包后任务栏用 exe 自带的图标；开发运行时用 build/icon.png（设计规范 §3.5b）
     ...(DEV_ICON ? { icon: DEV_ICON } : {}),
     titleBarStyle: 'hidden',
@@ -120,7 +143,7 @@ async function askSave(win) {
     defaultId: 0,
     cancelId: 2,
     noLink: true,
-    title: 'Markdown 记事本',
+    title: 'Paperwind',
     message: `是否保存对“${name}”的修改？`,
     detail: '如果不保存，修改将会丢失。',
   })
@@ -259,7 +282,7 @@ function friendlyError(e) {
   }
 }
 async function showError(win, message, e) {
-  await dialog.showMessageBox(win, { type: 'error', buttons: ['好'], noLink: true, title: 'Markdown 记事本', message, detail: friendlyError(e) })
+  await dialog.showMessageBox(win, { type: 'error', buttons: ['好'], noLink: true, title: 'Paperwind', message, detail: friendlyError(e) })
 }
 
 // ---------- 草稿：写入磁盘，程序被强制结束也不丢 ----------
@@ -586,7 +609,7 @@ ipcMain.handle('resolve-link', async (e, fromPath, href) => {
     st = await fs.stat(target)
   } catch {}
   if (!st) {
-    await dialog.showMessageBox(w, { type: 'warning', buttons: ['好'], noLink: true, title: 'Markdown 记事本', message: `找不到“${name}”`, detail: '它可能已被移动、重命名或删除。' })
+    await dialog.showMessageBox(w, { type: 'warning', buttons: ['好'], noLink: true, title: 'Paperwind', message: `找不到“${name}”`, detail: '它可能已被移动、重命名或删除。' })
     return { kind: 'missing' }
   }
   if (st.isFile() && NOTE_EXT.test(target)) return { kind: 'md', path: target, hash }
