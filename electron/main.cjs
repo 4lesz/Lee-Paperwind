@@ -26,6 +26,9 @@ const allowClose = new Set()
 // 改名为 Paperwind（2026-11-06）：数据目录从 %APPDATA%\markdown-app 换成 %APPDATA%\Paperwind。
 // 第一次以新名字启动时，把草稿、阅读记录和界面偏好搬过来，旧目录原样保留不删。
 // 自测等脚本自己指定了数据目录时不搬（只在用的是默认目录时搬）。
+// 注意：Electron 在运行本文件之前就会建好（空的）数据目录，所以不能用「目录在不在」判断是不是第一次，
+// 改用一个标记文件；每一项只在新目录里还没有时才复制，不覆盖新目录里已有的内容。
+const MIGRATED_MARK = 'migrated-from-markdown-app'
 function migrateUserData() {
   try {
     const appData = app.getPath('appData')
@@ -33,15 +36,21 @@ function migrateUserData() {
     const legacy = path.join(appData, 'markdown-app')
     const isDefault = target.toLowerCase() === path.join(appData, app.getName()).toLowerCase()
     if (!isDefault || target.toLowerCase() === legacy.toLowerCase()) return
-    if (fsSync.existsSync(target) || !fsSync.existsSync(legacy)) return
+    const mark = path.join(target, MIGRATED_MARK)
+    if (fsSync.existsSync(mark) || !fsSync.existsSync(legacy)) return
     fsSync.mkdirSync(target, { recursive: true })
     for (const item of ['drafts', 'reading.json', 'Local Storage']) {
       const from = path.join(legacy, item)
+      const to = path.join(target, item)
       if (!fsSync.existsSync(from)) continue
+      // 界面偏好（Local Storage）是一个数据库，不能和已有的混在一起：新目录里已经有了就不搬
+      if (item === 'Local Storage' && fsSync.existsSync(to)) continue
       try {
-        fsSync.cpSync(from, path.join(target, item), { recursive: true })
+        // force: false —— 新目录里已有的文件（例如改名后已经产生的草稿、阅读记录）保留，只补上缺的
+        fsSync.cpSync(from, to, { recursive: true, force: false, errorOnExist: false })
       } catch {}
     }
+    fsSync.writeFileSync(mark, new Date().toISOString(), 'utf8')
   } catch {}
 }
 migrateUserData()
