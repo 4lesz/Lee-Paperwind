@@ -1,5 +1,6 @@
 {
-  "name": "markdown-app",
+  "name": "paperwind",
+  "productName": "Paperwind",
   "private": true,
   "version": "0.1.0-beta.2",
   "type": "module",
@@ -42,11 +43,11 @@
     "vite": "^6.4.5"
   },
   "main": "electron/main.cjs",
-  "description": "自己用的所见即所得 Markdown 编辑器",
+  "description": "Paperwind：像备忘录一样好用的所见即所得 Markdown 编辑器",
   "author": "jiayan.liu",
   "build": {
     "appId": "local.markdown.notes",
-    "productName": "Markdown 记事本",
+    "productName": "Paperwind",
     "directories": {
       "output": "release"
     },
@@ -71,7 +72,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Markdown 记事本"
+      "shortcutName": "Paperwind",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "fileAssociations": [
       {

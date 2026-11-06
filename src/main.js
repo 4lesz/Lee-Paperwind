@@ -170,7 +170,7 @@ function markDirty() {
 function reportState() {
   $('docName').textContent = state.name
   $('dirtyDot').hidden = !state.dirty
-  const title = `${state.dirty ? '● ' : ''}${state.name} — Markdown 记事本`
+  const title = `${state.dirty ? '● ' : ''}${state.name} — Paperwind`
   document.title = title
   api.reportState({ dirty: state.dirty, path: state.path, title })
   folderNav?.render()
