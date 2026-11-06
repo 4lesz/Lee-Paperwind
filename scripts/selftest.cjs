@@ -280,7 +280,7 @@ app.on('browser-window-created', (_e, win) => {
         const wasDirty = T.dirty()
         T.click('.titlebar [data-cmd=source]'); await T.sleep(200)
         const src = document.getElementById('source')
-        const visible = !src.hidden, hasMd = src.value.startsWith('# Markdown')
+        const visible = !src.hidden, hasMd = src.value.startsWith(${JSON.stringify(original.split(/\r?\n/)[0])})
         T.click('.titlebar [data-cmd=source]'); await T.sleep(600)
         return { visible, hasMd, back: !document.getElementById('editor').hidden, dirtyUnchanged: T.dirty() === wasDirty }`)
       check('AC-M07', '源码模式来回切换内容正确，不产生未保存标记', m07.visible && m07.hasMd && m07.back && m07.dirtyUnchanged, m07)
