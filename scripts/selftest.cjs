@@ -545,8 +545,10 @@ app.on('browser-window-created', (_e, win) => {
       await js(`T.select('链接测试'); return true`)
       await key('K', ['control'])
       e08.modalFields = await js(`return document.querySelectorAll('.modal input').length`)
+      e08.before = await js(`return { sel: [T.e().state.selection.from, T.e().state.selection.to], modals: document.querySelectorAll('.modal-mask').length, leaving: document.querySelectorAll('.modal-mask.leaving').length, title: document.querySelector('.modal-mask:not(.leaving) .modal-title')?.textContent || null, focused: document.activeElement?.tagName }`)
       await fillModal(['https://example.com'])
       e08.added = await js(`return T.md().includes('[链接测试](https://example.com)')`)
+      if (!e08.added) e08.addedState = await js(`await T.sleep(300); return { md: T.md(), sel: [T.e().state.selection.from, T.e().state.selection.to], modals: document.querySelectorAll('.modal-mask').length, mode: window.__test.state.mode }`)
       await js(`const p = T.findText('链接测试'); T.e().commands.setTextSelection(p + 1); return true`)
       await key('K', ['control'])
       e08.prefilled = await js(`return document.querySelector('.modal input').value`)
@@ -1866,6 +1868,129 @@ app.on('browser-window-created', (_e, win) => {
         return { content: b.content, bg: b.backgroundImage.slice(0, 40), bottom: b.bottom, z: b.zIndex }`)
       check('AC-G08', '格式栏后方有纸面同色底衬，下沿 12px 渐隐（正文不会从胶囊上方露出）',
         g08.content !== 'none' && /gradient/.test(g08.bg) && g08.bottom === '-12px', g08)
+      await js(`window.__test.loadDoc({}); return true`)
+
+      // =================== v1.6：单个换行、流程图（§8f）；撤销不越过「打开」（AC-F19） ===================
+      const wDir = path.join(tmpDir, '笔记')
+      fs.cpSync(path.join(__dirname, '..', 'samples', '笔记'), wDir, { recursive: true })
+      const wFile = path.join(wDir, '流程与换行.md')
+      const wSrc = fs.readFileSync(wFile, 'utf8')
+      await toMode('edit')
+      // AC-W07 按需载入：此前打开的文档都没有流程图，组件不应已载入
+      const w07 = { before: await js(`return window.__mermaidLoaded === true`) }
+      await loadFile(wFile)
+      await wait(1500)
+      await js(`window.__W = {
+        at: (s, starts) => { let at = -1; T.e().state.doc.descendants((n, pos) => { if (at < 0 && n.isText && (starts ? n.text.startsWith(s) : n.text.includes(s))) at = pos + (starts ? 0 : n.text.indexOf(s)) }); return at },
+        para: (s) => [...document.querySelectorAll('.prose p')].find(p => p.textContent.startsWith(s)),
+        paraEnd: (s) => { let end = -1; T.e().state.doc.descendants((n, pos) => { if (n.type.name === 'paragraph' && n.textContent.startsWith(s)) end = pos + n.nodeSize - 1 }); return end },
+        out: () => { T.e().commands.setTextSelection(__W.at('名称', true)) },
+        preH: () => [...document.querySelectorAll('.prose pre.mermaid-src')].map(p => Math.round(p.getBoundingClientRect().height)),
+      }; return true`)
+      w07.after = await js(`return window.__mermaidLoaded === true`)
+      w07.remote = await js(`return performance.getEntriesByType('resource').filter(e => /^https?:/.test(e.name)).map(e => e.name)`)
+
+      // AC-W01 单个换行显示为换行
+      const w01 = await js(`const p = __W.para('名称'), lh = parseFloat(getComputedStyle(p).lineHeight)
+        return { soft: p.querySelectorAll('br[data-soft]').length, lines: Math.round(p.getBoundingClientRect().height / lh),
+          li: [...document.querySelectorAll('.prose ol li')].map(li => li.querySelectorAll('br[data-soft]').length),
+          hard: __W.para('第一行').querySelectorAll('br:not([data-soft])').length }`)
+      await toMode('read')
+      w01.read = await js(`const p = __W.para('名称'); return { soft: p.querySelectorAll('br[data-soft]').length, h: Math.round(p.getBoundingClientRect().height) }`)
+      await toMode('edit')
+      check('AC-W01', '段落里一行一条写的 4 行显示为 4 行（3 处换行），列表项下缩进的续行另起一行；阅读模式一致；Shift+Enter 的换行照样显示',
+        w01.soft === 3 && w01.lines === 4 && w01.li.length === 2 && w01.li.every((n) => n === 1) && w01.hard === 1 && w01.read.soft === 3, w01)
+
+      // AC-W02 原文不变；改过的段落仍写单个换行；Shift+Enter 写为 \ + 换行
+      const w02 = await js(`const same = T.md()
+        T.e().view.dispatch(T.e().state.tr.insertText('（已核对）', __W.paraEnd('名称'))); await T.sleep(400)
+        const edited = T.md()
+        T.e().commands.undo(); await T.sleep(300)
+        T.e().chain().setTextSelection(__W.paraEnd('一行一条')).setHardBreak().insertContent('X').run(); await T.sleep(400)
+        const hard = T.md()
+        T.e().commands.undo(); T.e().commands.undo(); await T.sleep(400)
+        return { same, edited, hard, back: T.md(), dirty: T.dirty() }`)
+      const w02exp = wSrc.replace('状态：采集中\r\n', '状态：采集中（已核对）\r\n')
+      check('AC-W02', '不修改时逐字一致（Windows 换行）；在一行一条的段落末尾加字后，这一段仍是单个换行、其他部分逐字不变；Shift+Enter 写为 \\ + 换行',
+        w02.same === wSrc && w02.edited === w02exp && w02.hard.includes('中间没有空行。\\\r\nX') && w02.back === wSrc && !w02.dirty,
+        { same: w02.same === wSrc, edited: w02.edited === w02exp, editedPart: w02.edited.split('## 采集点信息')[1]?.slice(0, 80), hard: w02.hard.includes('中间没有空行。\\\r\nX'), back: w02.back === wSrc, dirty: w02.dirty })
+
+      // AC-W03 流程图显示；单击图展开代码；改字后图跟着更新；光标移出收起
+      const w03 = {}
+      w03.view = await js(`const v = [...document.querySelectorAll('.mermaid-view')]
+        return { n: v.length, svg: v.map(x => !!x.querySelector('svg')), text: v[0]?.innerText || '', seq: v[1]?.innerText || '', label: getComputedStyle(v[0], '::before').content, preH: __W.preH() }`)
+      await toMode('read')
+      w03.read = await js(`return { preH: __W.preH(), svgs: document.querySelectorAll('.mermaid-view svg').length, label: getComputedStyle(document.querySelector('.mermaid-view'), '::before').content }`)
+      await toMode('edit')
+      const wb = await js(`const v = document.querySelector('.mermaid-view'); v.scrollIntoView({ block: 'center' }); await T.sleep(250); const r = v.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }`)
+      ensureVisible()
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: wb.x, y: wb.y, button: 'left', clickCount: 1 })
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: wb.x, y: wb.y, button: 'left', clickCount: 1 })
+      await wait(400)
+      w03.click = await js(`const p = document.querySelector('.prose pre.mermaid-src'); return { editing: p.classList.contains('mermaid-editing'), h: Math.round(p.getBoundingClientRect().height), inCode: T.e().isActive('codeBlock'), dirty: T.dirty() }`)
+      const w03t = Date.now()
+      await js(`const at = __W.at('开始'); T.e().view.dispatch(T.e().state.tr.insertText('出发', at, at + 2)); return true`)
+      w03.keep = await js(`return !!document.querySelector('.mermaid-view svg')`)
+      w03.ms = null
+      for (let i = 0; i < 40; i++) {
+        await wait(50)
+        if (await js(`return document.querySelector('.mermaid-view').innerText.includes('出发')`)) { w03.ms = Date.now() - w03t; break }
+      }
+      await js(`__W.out(); await T.sleep(200); return true`)
+      w03.leave = await js(`return __W.preH()`)
+      check('AC-W03', '流程图显示为图（含「开始」「是否通过」），时序图同样为图；阅读模式只有图；编辑模式默认只有图、右上角「流程图」；真实鼠标单击图 → 代码展开、光标在代码里；改「开始」为「出发」→ 约 0.5 秒内图更新且期间图不消失；光标移出 → 代码收起',
+        w03.view.n === 3 && w03.view.svg.every(Boolean) && /开始/.test(w03.view.text) && /是否通过/.test(w03.view.text) && /上报任务/.test(w03.view.seq) &&
+          w03.view.label.includes('流程图') && w03.view.preH.every((h) => h === 0) && w03.read.preH.every((h) => h === 0) && w03.read.svgs === 3 && w03.read.label === 'none' &&
+          w03.click.editing && w03.click.h > 0 && w03.click.inCode && !w03.click.dirty && w03.keep && w03.ms !== null && w03.ms <= 700 && w03.leave.every((h) => h === 0),
+        w03)
+
+      // AC-W04 撤销恢复原文；源码模式看到原来的代码
+      const w04 = await js(`T.e().commands.undo(); await T.sleep(800); return { same: T.md() === ${JSON.stringify(wSrc)}, dirty: T.dirty(), svg: document.querySelector('.mermaid-view').innerText.includes('开始') }`)
+      w04.source = await js(`T.click('.titlebar [data-cmd=source]'); await T.sleep(300); const v = document.getElementById('source').value
+        T.click('.titlebar [data-cmd=source]'); await T.sleep(600); return v.includes('A[开始] --> B{是否通过}') && v.includes('sequenceDiagram')`)
+      w04.after = await js(`return { same: T.md() === ${JSON.stringify(wSrc)}, dirty: T.dirty() }`)
+      check('AC-W04', '流程图修改后 Ctrl+Z 恢复原文且不再是未保存；源码模式看到原来的代码，切回后仍逐字一致',
+        w04.same && !w04.dirty && w04.svg && w04.source && w04.after.same && !w04.after.dirty, w04)
+
+      // AC-W05 写错时显示提示、代码保持展开；不弹窗、控制台无错误；改回恢复
+      const w05 = { errs: consoleErrors.length, boxes: fake.box.length }
+      await js(`await T.sleep(300); const at = __W.at('flowchart LR', true); T.e().view.dispatch(T.e().state.tr.insertText('flowchart ???', at, at + 12)); return true`)
+      await wait(1200)
+      w05.err = await js(`const v = document.querySelector('.mermaid-view'); return { msg: v.innerText, state: v.dataset.state }`)
+      await js(`__W.out(); await T.sleep(200); return true`)
+      w05.preH = await js(`return __W.preH()[0]`)
+      await js(`T.e().commands.undo(); await T.sleep(1200); return true`)
+      w05.fixed = await js(`return { svg: !!document.querySelector('.mermaid-view svg'), same: T.md() === ${JSON.stringify(wSrc)}, dirty: T.dirty(), preH: __W.preH()[0] }`)
+      w05.errs = consoleErrors.length - w05.errs
+      w05.boxes = fake.box.length - w05.boxes
+      check('AC-W05', '流程图写错：图的位置提示「流程图有误：…」，光标移出后代码仍展开；不弹窗、控制台无错误；撤销后恢复成图',
+        w05.err.msg.startsWith('流程图有误：') && w05.err.state === 'error' && w05.preH > 0 && w05.errs === 0 && w05.boxes === 0 &&
+          w05.fixed.svg && w05.fixed.same && !w05.fixed.dirty && w05.fixed.preH === 0,
+        w05)
+
+      // AC-W06 安全：click 回调、javascript: 链接、onerror 都不生效
+      const w06 = await js(`const v = [...document.querySelectorAll('.mermaid-view')][2]
+        return { pwned: window.__pwned || null, text: v.innerText, img: v.querySelectorAll('img, [onerror], [onclick]').length, js: v.querySelectorAll('a[href^="javascript"], a[*|href^="javascript"]').length, foreign: v.querySelectorAll('foreignObject').length }`)
+      check('AC-W06', '流程图里的 click 回调、javascript: 链接、带 onerror 的 HTML 标签都不执行，不在图里生成元素；不请求任何网络资源',
+        !w06.pwned && /危险/.test(w06.text) && w06.img === 0 && w06.js === 0 && w07.remote.length === 0, { ...w06, remote: w07.remote })
+      check('AC-W07', '打开不含流程图的文档时不载入流程图组件；打开含流程图的文档后才载入，且不需要联网', !w07.before && w07.after && w07.remote.length === 0, w07)
+
+      // AC-F19 撤销不越过「打开」：打开后连按 Ctrl+Z 不变；在 A 改字后换到 B，连按 Ctrl+Z，B 不变
+      const f19 = {}
+      await loadFile(wFile)
+      await js(`T.e().commands.focus('start'); return true`)
+      for (let i = 0; i < 3; i++) await key('Z', ['control'])
+      await wait(300)
+      f19.load = await js(`return { same: T.md() === ${JSON.stringify(wSrc)}, dirty: T.dirty() }`)
+      await js(`T.e().view.dispatch(T.e().state.tr.insertText('【A 的修改】', 3)); await T.sleep(300); return true`)
+      await loadFile(G('stages/01-起步.md'))
+      const f19b = await js(`return T.md()`)
+      await js(`T.e().commands.focus('start'); return true`)
+      for (let i = 0; i < 4; i++) await key('Z', ['control'])
+      await wait(300)
+      f19.switch = await js(`return { same: T.md() === ${JSON.stringify(f19b)}, dirty: T.dirty(), hasA: T.md().includes('A 的修改') }`)
+      check('AC-F19', '打开文件后连按 Ctrl+Z 内容不变、不变成空白；在 A 篇改字后换到 B 篇，连按 Ctrl+Z，B 篇不变、不出现未保存',
+        f19.load.same && !f19.load.dirty && f19.switch.same && !f19.switch.dirty && !f19.switch.hasA, f19)
       await js(`window.__test.loadDoc({}); return true`)
 
       // =================== 第三部分：保存与确认流程（模拟对话框） ===================

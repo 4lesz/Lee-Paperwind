@@ -23,6 +23,7 @@ import HardBreak from '@tiptap/extension-hard-break'
 import { HtmlBlock, HtmlInline, Kbd } from './html-preserve.js'
 import { SourcePreserve } from './source-preserve.js'
 import { FrontMatter } from './front-matter.js'
+import { MermaidDiagram } from './diagram.js'
 import { setDocDir, resolveImageSrc, isSafeHref } from './paths.js'
 
 import powershell from 'highlight.js/lib/languages/powershell'
@@ -182,7 +183,21 @@ const MdLink = Link.extend({
   },
 })
 
+// 例外：换行两边的行都只有图片（GitHub README 里一行一个的徽章）时，仍排在同一行（设计规范 §5「单个换行」，AC-G03）
+const PICTURE_PARTS = new Set(['image', 'link_open', 'link_close'])
+function picturesOnly(tokens, idx, dir) {
+  let pics = 0
+  for (let i = idx + dir; i >= 0 && i < tokens.length; i += dir) {
+    const t = tokens[i]
+    if (t.type === 'softbreak' || t.type === 'hardbreak') break
+    if (t.type === 'image' || (t.type === 'html_inline' && /^<img\b/i.test(t.content))) pics++
+    else if (!(PICTURE_PARTS.has(t.type) || (t.type === 'text' && !t.content.trim()))) return false
+  }
+  return pics > 0
+}
+
 // 换行：文件里写的是 <br> 时，保存时仍写 <br>（AC-M05）
+// 段落里的单个换行（软换行）也显示为换行，保存时仍写为单个换行（设计规范 §5「单个换行」，AC-W01、W02）
 const HtmlBreak = HardBreak.extend({
   addAttributes() {
     return {
@@ -190,6 +205,11 @@ const HtmlBreak = HardBreak.extend({
         default: null,
         parseHTML: (el) => el.getAttribute('data-html'),
         renderHTML: () => ({}),
+      },
+      soft: {
+        default: false,
+        parseHTML: (el) => el.getAttribute('data-soft') === 'true',
+        renderHTML: (attrs) => (attrs.soft ? { 'data-soft': 'true' } : {}),
       },
     }
   },
@@ -199,13 +219,18 @@ const HtmlBreak = HardBreak.extend({
         serialize(state, node, parent, index) {
           for (let i = index + 1; i < parent.childCount; i++) {
             if (parent.child(i).type !== node.type) {
-              state.write(node.attrs.html || (state.inTable ? '<br>' : '\\\n'))
+              state.write(node.attrs.html || (node.attrs.soft && !state.inTable ? '\n' : state.inTable ? '<br>' : '\\\n'))
               return
             }
           }
           if (node.attrs.html) state.write(node.attrs.html)
         },
-        parse: {},
+        parse: {
+          setup(md) {
+            md.renderer.rules.softbreak = (tokens, idx) =>
+              picturesOnly(tokens, idx, -1) && picturesOnly(tokens, idx, 1) ? '\n' : '<br data-soft="true">\n'
+          },
+        },
       },
     }
   },
@@ -246,6 +271,7 @@ export function createEditor({ element, bubbleElement, onUpdate, onSelection, on
       HtmlBlock,
       HtmlInline,
       SourcePreserve,
+      MermaidDiagram,
       Placeholder.configure({
         placeholder: ({ node }) => (node.type.name === 'heading' ? '标题' : '开始输入…'),
       }),

@@ -14,6 +14,7 @@ const winState = new Map()
 // Windows 11 22H2（build 22621）及以上支持 Mica 半透明材质
 const SUPPORTS_MICA = process.platform === 'win32' && Number(require('node:os').release().split('.')[2] || 0) >= 22621
 const TITLEBAR_HEIGHT = 52
+const DEV_ICON = [path.join(__dirname, '..', 'build', 'icon.png')].find((p) => !app.isPackaged && fsSync.existsSync(p))
 const overlayColors = (dark) => ({
   color: SUPPORTS_MICA ? '#00000000' : dark ? '#1c1c1e' : '#f5f5f7',
   symbolColor: dark ? '#f5f5f7' : '#1d1d1f',
@@ -44,6 +45,8 @@ function createWindow(filePath = null) {
     minHeight: 460,
     show: false,
     title: 'Markdown 记事本',
+    // 打包后任务栏用 exe 自带的图标；开发运行时用 build/icon.png（设计规范 §3.5b）
+    ...(DEV_ICON ? { icon: DEV_ICON } : {}),
     titleBarStyle: 'hidden',
     titleBarOverlay: overlayColors(nativeTheme.shouldUseDarkColors),
     ...(SUPPORTS_MICA

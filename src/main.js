@@ -152,7 +152,12 @@ document.querySelector('.drop-icon').innerHTML = icons.file
 
 // ---------------- 文档状态 ----------------
 function currentMarkdown() {
-  return state.mode === 'source' ? sourceEl.value : editor.storage.markdown.getMarkdown()
+  return state.mode === 'source' ? sourceText() : editor.storage.markdown.getMarkdown()
+}
+// 源码框（textarea）会把 Windows 换行 \r\n 统一成 \n；取出时按文件原来的换行方式还原，
+// 否则切一次源码模式就会被标为未保存，保存后整篇换行方式都被改掉（AC-W04）
+function sourceText() {
+  return state.eol === '\r\n' ? sourceEl.value.replace(/\r?\n/g, '\r\n') : sourceEl.value
 }
 
 function markDirty() {
@@ -195,14 +200,35 @@ function rememberFolder(path, mode, root = null) {
   for (const k of keys) api.memorySet('folders', k, { file: path, mode: mode === 'read' ? 'read' : 'edit' })
 }
 
+// 清空撤销记录：上一篇的修改不能在这一篇里被「撤销」出来（AC-F19）。
+// 只重新初始化撤销插件自己的状态，其他插件的状态保持不变。
+function clearHistory() {
+  const st = editor.state
+  const plugins = st.plugins
+  const hist = plugins.find((p) => p.key.startsWith('history$'))
+  if (!hist) return
+  const without = st.reconfigure({ plugins: plugins.filter((p) => p !== hist) })
+  editor.view.updateState(without.reconfigure({ plugins }))
+}
+
 function loadDoc({ path = null, name = '未命名.md', content = '' }, { hash = '', root = null } = {}) {
   hideDraftBanner()
   backDecisions.clear()
   rememberPosition()
   state.path = path
   state.name = name
+  state.eol = /\r\n/.test(content) ? '\r\n' : '\n'
   setDocDir(dirOf(path))
-  editor.commands.setContent(content, false)
+  // 载入不进撤销记录：否则打开文件 / 换篇后连按 Ctrl+Z 会把整篇撤销成空白（AC-F19）
+  editor
+    .chain()
+    .command(({ tr }) => {
+      tr.setMeta('addToHistory', false)
+      return true
+    })
+    .setContent(content, false)
+    .run()
+  clearHistory()
   refreshIndex()
   // 以编辑器规范化后的 Markdown 作为“已保存”基准
   state.savedMd = editor.storage.markdown.getMarkdown()
@@ -340,7 +366,7 @@ function applyMode(mode) {
   const prev = state.mode
   if (prev === 'source' && mode !== 'source') {
     // 源码 → 富文本
-    editor.commands.setContent(sourceEl.value, false)
+    editor.commands.setContent(sourceText(), false)
     refreshIndex()
   }
   if (mode === 'source') {
@@ -430,8 +456,9 @@ function updateActiveHeading() {
   const top = paperEl.getBoundingClientRect().top + 90
   let idx = 0
   outlineItems.forEach((it, i) => {
+    // 刚编辑完时大纲里记的位置可能还没更新，可能指到文字节点上，跳过（AC-P06）
     const dom = editor.view.nodeDOM(it.pos)
-    if (dom && dom.getBoundingClientRect().top <= top) idx = i
+    if (dom && dom.nodeType === 1 && dom.getBoundingClientRect().top <= top) idx = i
   })
   lis.forEach((li, i) => li.classList.toggle('current', i === idx))
 }

@@ -43,7 +43,7 @@ export function topInset() {
 
 export function scrollToPos(editor, scroller, pos, smooth = true) {
   const dom = editor.view.nodeDOM(pos)
-  if (!dom) return false
+  if (!dom || dom.nodeType !== 1) return false
   const top = dom.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - topInset()
   scroller.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' })
   return true
