@@ -466,6 +466,143 @@ body[data-mode='source'] .formatbar-wrap {
   display: none;
 }
 
+/* =====================================================================
+   查找替换条（悬浮在正文上方，不挤压布局）§4.15
+   ===================================================================== */
+.findbar {
+  position: absolute;
+  top: 66px;
+  right: 16px;
+  z-index: 20;
+  width: 360px;
+  max-width: calc(100% - 32px);
+  padding: 8px;
+  border-radius: var(--r-lg);
+  background: var(--bg-elevated);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--hairline), var(--shadow-s);
+  transform-origin: top right;
+  animation: pop-in var(--dur-base) var(--spring);
+}
+body[data-mode='read'] .findbar {
+  top: 12px;
+}
+.findbar[hidden],
+.find-row[hidden] {
+  display: none;
+}
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.find-replace-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--separator);
+}
+.find-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--fill);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.find-input::placeholder {
+  color: var(--text-tertiary);
+}
+.find-input:focus {
+  box-shadow: 0 0 0 3px var(--accent-fill);
+}
+.find-count {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.find-btn {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--spring);
+}
+.find-btn:hover:not(:disabled),
+.find-more:hover,
+.find-act:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--text);
+}
+.find-btn:active:not(:disabled),
+.find-act:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.find-btn:disabled,
+.find-act:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+.find-more,
+.find-act {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease), transform var(--dur-fast) var(--spring);
+}
+.find-more.on {
+  background: var(--accent-fill);
+  color: var(--accent);
+}
+.find-act {
+  background: var(--fill);
+  color: var(--text);
+}
+.find-act:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+.find-btn:focus-visible,
+.find-more:focus-visible,
+.find-act:focus-visible,
+.find-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-fill);
+}
+
+/* 匹配高亮：全部浅黄，当前一处黄底黑字 */
+.find-hit {
+  background: var(--mark);
+  border-radius: 2px;
+}
+.find-hit.find-current {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
 /* 浮动菜单 §4.4 */
 .bubble {
   display: flex;

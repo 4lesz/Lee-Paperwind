@@ -49,6 +49,22 @@
             <div class="scroll-tail" id="scrollTail"></div>
             <textarea id="source" spellcheck="false" hidden></textarea>
           </div>
+          <!-- 查找替换条：浮在正文上方，不挤压布局（设计规范 §4.15） -->
+          <div class="findbar" id="findbar" role="search" aria-label="查找替换" hidden>
+            <div class="find-row">
+              <input class="find-input" id="findInput" type="text" placeholder="查找" autocomplete="off" spellcheck="false" />
+              <span class="find-count" id="findCount">0/0</span>
+              <button class="find-btn" id="findPrev" data-tip="上一个" data-key="Shift+Enter"></button>
+              <button class="find-btn" id="findNext" data-tip="下一个" data-key="Enter"></button>
+              <button class="find-more" id="findToggle" data-tip="替换" data-key="Ctrl+H">替换</button>
+              <button class="find-btn" id="findClose" data-tip="关闭" data-key="Esc"></button>
+            </div>
+            <div class="find-row find-replace-row" id="replaceRow" hidden>
+              <input class="find-input" id="replaceInput" type="text" placeholder="替换为" autocomplete="off" spellcheck="false" />
+              <button class="find-act" id="replaceOne">替换</button>
+              <button class="find-act" id="replaceAll">全部替换</button>
+            </div>
+          </div>
           <!-- 上一篇 / 下一篇：固定在窗口底部（设计规范 §4.13 v1.4） -->
           <nav class="pager" id="pager" aria-label="上一篇和下一篇"></nav>
           <div class="wordcount" id="stats"></div>

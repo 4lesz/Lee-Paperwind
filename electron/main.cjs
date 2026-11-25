@@ -247,6 +247,9 @@ function buildMenu() {
         { label: '粘贴', role: 'paste' },
         { label: '粘贴为纯文本', role: 'pasteAndMatchStyle' },
         { label: '全选', role: 'selectAll' },
+        { type: 'separator' },
+        { label: '查找…', accelerator: 'CmdOrCtrl+F', click: (_m, w) => send('find', w) },
+        { label: '替换…', accelerator: 'CmdOrCtrl+H', click: (_m, w) => send('replace', w) },
       ],
     },
     {

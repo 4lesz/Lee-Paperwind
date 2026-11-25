@@ -2,7 +2,7 @@
   "name": "paperwind",
   "productName": "Paperwind",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -53,8 +53,10 @@
     "appId": "local.markdown.notes",
     "productName": "Paperwind",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "electronDist": "node_modules/electron/dist",
     "files": [
       "dist/**",
       "electron/**",

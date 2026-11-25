@@ -9,6 +9,7 @@ import { findHeading, scrollToPos, capturePosition, restorePosition } from './po
 import { Selection } from '@tiptap/pm/state'
 import { createPageTurn } from './page-turn.js'
 import { createLinkBurst } from './link-burst.js'
+import { createFind } from './find.js'
 
 const api = window.api
 const $ = (id) => document.getElementById(id)
@@ -98,6 +99,7 @@ const ctx = {
 // 浮动菜单元素会被编辑器移出文档，需提前取到引用
 const bubbleEl = $('bubble')
 let toolbar = null
+let find = null
 const editor = createEditor({
   element: $('editor'),
   bubbleElement: bubbleEl,
@@ -105,6 +107,7 @@ const editor = createEditor({
     markDirty()
     afterChange()
     refreshIndex()
+    find?.onDocChange()
   },
   onSelection: () => toolbar?.refresh(),
   onLinkClick: (href) => handleLink(href),
@@ -119,6 +122,14 @@ toolbar = buildToolbar({
   languages: CODE_LANGUAGES,
 })
 toolbar.refresh()
+
+// 查找替换条（v0.2，设计规范 §4.15）
+find = createFind({
+  editor,
+  scroller: paperEl,
+  getMode: () => state.mode,
+  onNeedEdit: () => applyMode('edit'),
+})
 
 // 标题栏按钮
 const modeSwitch = createSegmented({
@@ -212,6 +223,7 @@ function clearHistory() {
 }
 
 function loadDoc({ path = null, name = '未命名.md', content = '' }, { hash = '', root = null } = {}) {
+  find?.close({ refocus: false })
   hideDraftBanner()
   backDecisions.clear()
   rememberPosition()
@@ -364,6 +376,7 @@ function setMode(mode) {
 function applyMode(mode) {
   if (mode === state.mode) return
   const prev = state.mode
+  if (mode === 'source') find?.close({ refocus: false })
   if (prev === 'source' && mode !== 'source') {
     // 源码 → 富文本
     editor.commands.setContent(sourceText(), false)
@@ -967,6 +980,10 @@ async function runCommand(cmd) {
       return editor.chain().focus().extendMarkRange('link').unsetLink().run()
     case 'clearFormat':
       return editor.chain().focus().unsetAllMarks().clearNodes().run()
+    case 'find':
+      return find?.open()
+    case 'replace':
+      return find?.open({ replace: true })
     case 'undo':
       if (state.mode === 'source') document.execCommand('undo')
       else editor.chain().focus().undo().run()
@@ -1062,4 +1079,4 @@ syncThemeIcon()
 document.body.dataset.mode = 'edit'
 loadDoc({})
 // 自测脚本使用的调试入口
-window.__test = { loadDoc, state, gotoFile, openFolder, folderNav, handleLink, pageTurn, linkBurst, editIndex, applyIndex, goSide, relLink, joinPath, save }
+window.__test = { loadDoc, state, gotoFile, openFolder, folderNav, handleLink, pageTurn, linkBurst, editIndex, applyIndex, goSide, relLink, joinPath, save, find }

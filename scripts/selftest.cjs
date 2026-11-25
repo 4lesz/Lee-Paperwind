@@ -407,7 +407,15 @@ app.on('browser-window-created', (_e, win) => {
       }
       // 准备一个文件名含空格、中文、括号的临时文件（AC-F18）
       const tmpDir = path.join(outDir, 'tmp')
-      fs.rmSync(tmpDir, { recursive: true, force: true })
+      // Windows 上刚被其他进程放开的文件可能短暂删不掉（ENOTEMPTY），重试几次
+      for (let i = 0; i < 3; i++) {
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true })
+          break
+        } catch {
+          await wait(300)
+        }
+      }
       fs.mkdirSync(tmpDir, { recursive: true })
       const tmpFile = path.join(tmpDir, '保存 测试 (1).md')
       fs.writeFileSync(tmpFile, '# 键盘测试\n\n这是一段文字\n', 'utf8')
@@ -497,6 +505,258 @@ app.on('browser-window-created', (_e, win) => {
       await type('---')
       e11['分割线'] = await js(`return document.querySelectorAll('.prose hr').length > 0`)
       check('AC-E11', 'Markdown 快捷输入全部有效', Object.values(e11).every(Boolean), e11)
+
+      // ---------- AC-Q01 ~ Q11 查找替换（v0.2，验收标准 §8g） ----------
+      const findDoc = [
+        '# 查找测试',
+        '',
+        'Alice 和 alice 都在这里，ALICE 也在。',
+        '',
+        '苹果 Apple apple。',
+        '',
+        '重**要**的 **要**点。',
+        '',
+        '[链接 needle](https://example.com/needle)',
+        '',
+        '属性区外的 needle。',
+        '',
+        '这里是尾部文字。',
+        '',
+      ].join('\n')
+      const openFindDoc = async () => {
+        await js(`window.__test.loadDoc(${JSON.stringify({ name: '查找测试.md', content: findDoc })}); await T.sleep(500); return true`)
+      }
+      const findInfo = () => js(`
+        const bar = document.getElementById('findbar')
+        const cur = document.querySelector('.find-hit.find-current')
+        return {
+          open: !bar.hidden,
+          replace: !document.getElementById('replaceRow').hidden,
+          count: document.getElementById('findCount').textContent,
+          hits: document.querySelectorAll('.find-hit').length,
+          currents: document.querySelectorAll('.find-hit.find-current').length,
+          currentText: cur ? cur.textContent : null,
+          focus: document.activeElement ? (document.activeElement.id || '') : '',
+          editorFocused: document.activeElement === T.e().view.dom,
+          disabled: document.getElementById('findNext').disabled,
+          mode: window.__test.state.mode,
+          pos: getComputedStyle(bar).position,
+        }`)
+      const setFind = (q) => js(`const i = document.getElementById('findInput'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input', { bubbles: true })); await T.sleep(320); return true`)
+      const setReplaceText = (t) => js(`document.getElementById('replaceInput').value = ${JSON.stringify(t)}; return true`)
+      await openFindDoc()
+
+      // AC-Q01 Ctrl+F 打开（不挤压布局）→ Ctrl+H 展开替换 → Esc 关闭回到编辑
+      const q01a = await js(`return { open: !document.getElementById('findbar').hidden, width: document.getElementById('editor').getBoundingClientRect().width, scroll: document.getElementById('paper').scrollTop }`)
+      await menuKey('CmdOrCtrl+F')
+      await wait(300)
+      const q01 = await findInfo()
+      const q01b = await js(`return { width: document.getElementById('editor').getBoundingClientRect().width, scroll: document.getElementById('paper').scrollTop }`)
+      await menuKey('CmdOrCtrl+H')
+      await wait(300)
+      const q01c = await findInfo()
+      await key('Escape')
+      await wait(250)
+      const q01d = await findInfo()
+      check('AC-Q01', 'Ctrl+F / Ctrl+H 打开查找条且不挤压正文，Esc 关闭回到编辑',
+        !q01a.open && q01.open && !q01.replace && q01.focus === 'findInput' && q01.pos === 'absolute' &&
+          Math.abs(q01b.width - q01a.width) < 1 && Math.abs(q01b.scroll - q01a.scroll) < 1 &&
+          q01c.open && q01c.replace && q01c.focus === 'replaceInput' &&
+          !q01d.open && !q01d.replace && q01d.editorFocused && q01d.mode === 'edit',
+        { q01a, q01, q01b, q01c, q01d })
+
+      // AC-Q02 不区分大小写、全部高亮、当前一处加重；无结果显示「无结果」
+      await menuKey('CmdOrCtrl+F')
+      await wait(250)
+      await setFind('alice')
+      const q02 = await findInfo()
+      const q02texts = await js(`return [...document.querySelectorAll('.find-hit')].map((h) => h.textContent).join('|')`)
+      await setFind('zzz')
+      const q02b = await findInfo()
+      check('AC-Q02', '不区分大小写、高亮全部匹配、当前一处加重；无结果提示「无结果」',
+        q02.count === '1/3' && q02.hits === 3 && q02.currents === 1 && q02texts.toLowerCase() === 'alice|alice|alice' &&
+          q02b.count === '无结果' && q02b.hits === 0 && q02b.disabled,
+        { q02, q02texts, q02b })
+
+      // AC-Q03 Enter / Shift+Enter 上下跳转、回绕，焦点留在查找框
+      await js(`T.e().commands.setTextSelection(1); document.getElementById('findInput').focus(); return true`)
+      await setFind('alice')
+      const q03 = []
+      for (const mods of [[], ['shift'], ['shift']]) {
+        await key('Return', mods)
+        q03.push(await findInfo())
+      }
+      await js(`document.getElementById('findInput').focus(); return true`)
+      const q03f = await findInfo()
+      check('AC-Q03', 'Enter / Shift+Enter 上下跳转并回绕，焦点留在查找框',
+        q03.map((x) => x.count).join('|') === '2/3|1/3|3/3' && q03.every((x) => x.currents === 1) && q03f.focus === 'findInput' && q03f.editorFocused === false,
+        q03.map((x) => x.count))
+
+      // AC-Q04 文档改动后自动刷新；清空查询后没有结果、按钮禁用
+      await js(`T.e().chain().focus('start').insertContent('alice').run(); await T.sleep(450); return true`)
+      const q04a = await findInfo()
+      await js(`T.e().commands.undo(); await T.sleep(450); return true`)
+      const q04b = await findInfo()
+      await setFind('')
+      const q04c = await findInfo()
+      check('AC-Q04', '文档改动后高亮自动刷新；清空查询后不显示结果并禁用按钮',
+        q04a.count === '1/4' && q04a.hits === 4 && q04b.count === '1/3' && q04b.hits === 3 &&
+          q04c.count === '0/0' && q04c.hits === 0 && q04c.disabled,
+        { 改动后: q04a.count, 撤销后: q04b.count, 清空后: q04c.count })
+
+      // AC-Q05 替换单个：自动跳到下一处，Ctrl+Z 一步还原
+      await js(`T.e().commands.setTextSelection(1); return true`)
+      await setFind('alice')
+      await setReplaceText('bob')
+      await js(`document.getElementById('replaceOne').click(); await T.sleep(350); return true`)
+      const q05 = await js(`return { md: T.md(), count: document.getElementById('findCount').textContent, hits: document.querySelectorAll('.find-hit').length }`)
+      await js(`T.e().commands.focus(); return true`)
+      await key('Z', ['control'])
+      await wait(450)
+      const q05b = await js(`return { md: T.md(), count: document.getElementById('findCount').textContent }`)
+      check('AC-Q05', '替换单个后自动跳到下一处，Ctrl+Z 一步还原',
+        q05.md.includes('bob 和 alice') && q05.count === '1/2' && q05.hits === 2 &&
+          q05b.md.includes('Alice 和 alice') && q05b.count === '1/3',
+        { 替换后: q05, 撤销后: q05b })
+
+      // AC-Q06 全部替换给出数量、一步撤销；a→aa 不会无限替换
+      await js(`T.e().commands.setTextSelection(1); return true`)
+      await setFind('alice')
+      await setReplaceText('bob')
+      await js(`document.getElementById('replaceAll').click(); await T.sleep(350); return true`)
+      const q06 = await js(`return { md: T.md(), count: document.getElementById('findCount').textContent, toast: (document.querySelector('.toast') || {}).textContent || '' }`)
+      await js(`T.e().commands.focus(); return true`)
+      await key('Z', ['control'])
+      await wait(450)
+      const q06b = await js(`return { md: T.md(), count: document.getElementById('findCount').textContent }`)
+      await js(`window.__test.loadDoc({ name: '重复替换.md', content: 'a' }); await T.sleep(300); return true`)
+      await menuKey('CmdOrCtrl+F')
+      await wait(250)
+      await setFind('a')
+      await setReplaceText('aa')
+      await js(`document.getElementById('replaceAll').click(); await T.sleep(400); return true`)
+      const q06c = await js(`return T.md().trim()`)
+      check('AC-Q06', '全部替换提示数量、Ctrl+Z 一步还原；a→aa 不会无限替换',
+        !/alice/i.test(q06.md) && q06.count === '无结果' && q06.toast.includes('共 3 处') &&
+          q06b.md.includes('Alice 和 alice') && q06b.count === '1/3' && q06c === 'aa',
+        { 全部替换后: q06, 撤销后: q06b, aa: q06c })
+
+      // AC-Q07 匹配边界：不含 Markdown 标记 / 链接地址，不跨段，跨格式可匹配
+      await openFindDoc()
+      await menuKey('CmdOrCtrl+F')
+      await wait(250)
+      await setFind('needle')
+      const q07a = await findInfo()
+      await setFind('要的 要')
+      const q07b = await findInfo()
+      // 跨格式的一处匹配会被 mark 边界拆成多个 .find-hit 片段：拼起来应正好是查询词，且全部是当前匹配
+      const q07bFrag = await js(`return {
+        text: [...document.querySelectorAll('.find-hit')].map((e) => e.textContent).join(''),
+        notCurrent: document.querySelectorAll('.find-hit:not(.find-current)').length,
+      }`)
+      await setFind('也在。苹果')
+      const q07c = await findInfo()
+      await setFind('## ')
+      const q07d = await findInfo()
+      await setFind('apple')
+      const q07e = await findInfo()
+      // 跨格式的一处匹配会被拆成多个 .find-hit 片段（mark 边界），所以按「当前一处 + 总数」判断
+      check('AC-Q07', '不匹配 Markdown 标记和链接地址，不跨段，跨格式可匹配',
+        q07a.hits === 2 && q07a.count.endsWith('/2') && q07bFrag.text === '要的 要' && q07bFrag.notCurrent === 0 &&
+          q07b.count === '1/1' && q07c.count === '无结果' && q07d.count === '无结果' && q07e.hits === 2 && q07e.count.endsWith('/2'),
+        { needle: q07a.count, needleHits: q07a.hits, 跨格式: q07b.count, 跨格式片段: q07bFrag, 跨段: q07c.count, 标记: q07d.count, apple: q07e.count })
+
+      // AC-Q08 阅读模式可查找、Ctrl+H 切回编辑；源码模式先切编辑；切源码/换篇关闭
+      await setFind('查找测试')
+      await key('Escape')
+      await wait(200)
+      await js(`T.click('.mode-switch .seg-item[data-value=read]'); await T.sleep(300); return true`)
+      await menuKey('CmdOrCtrl+F')
+      await wait(300)
+      await setFind('查找测试')
+      const q08a = await findInfo()
+      await menuKey('CmdOrCtrl+H')
+      await wait(350)
+      const q08b = await findInfo()
+      await key('Escape')
+      await wait(200)
+      await js(`T.click('.titlebar [data-cmd=source]'); await T.sleep(300); return true`)
+      const q08c0 = await js(`return window.__test.state.mode`)
+      await menuKey('CmdOrCtrl+F')
+      await wait(400)
+      const q08c = await findInfo()
+      await js(`T.click('.titlebar [data-cmd=source]'); await T.sleep(300); return true`)
+      const q08d = await findInfo()
+      await js(`T.click('.titlebar [data-cmd=source]'); await T.sleep(300); return true`)
+      await menuKey('CmdOrCtrl+F')
+      await wait(300)
+      await js(`window.__test.loadDoc({ name: '另一篇.md', content: '# 另一篇' }); await T.sleep(400); return true`)
+      const q08e = await findInfo()
+      check('AC-Q08', '阅读模式可查找、Ctrl+H 切回编辑；源码模式先切编辑；切源码 / 换篇时关闭',
+        q08a.count === '1/1' && q08a.hits === 1 && q08a.mode === 'read' &&
+          q08b.open && q08b.replace && q08b.mode === 'edit' &&
+          q08c0 === 'source' && q08c.open && q08c.mode === 'edit' && !q08d.open && q08d.mode === 'source' && !q08e.open,
+        { 阅读: q08a, 阅读CtrlH: q08b, 源码前: q08c0, 源码CtrlF: q08c, 切源码: q08d, 换篇: q08e })
+
+      // AC-Q09 长文档（约 1MB）：0.5 秒内出结果，高亮限流但计数真实
+      const q09 = await js(`
+        const br = String.fromCharCode(10, 10)
+        const para = 'Alice 和 alice 都在这里。'.repeat(40) + br
+        const content = '# 长文档' + br + para.repeat(1400)
+        window.__test.loadDoc({ name: '长文档.md', content })
+        await T.sleep(3000)
+        const lower = content.toLowerCase()
+        let total = 0, k = 0
+        while ((k = lower.indexOf('alice', k)) !== -1) { total++; k += 5 }
+        const input = document.getElementById('findInput')
+        input.value = 'alice'
+        const t0 = performance.now()
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        while ((document.getElementById('findCount').textContent === '0/0' || !document.querySelector('.find-hit')) && performance.now() - t0 < 6000) await T.sleep(20)
+        return {
+          chars: content.length,
+          total,
+          count: document.getElementById('findCount').textContent,
+          hits: document.querySelectorAll('.find-hit').length,
+          elapsed: Math.round(performance.now() - t0),
+        }`)
+      check('AC-Q09', '长文档（约 1MB）查找 0.5 秒内出结果，高亮限流但计数真实',
+        q09.chars > 1000000 && q09.count === '1/' + q09.total && q09.hits <= 1200 && q09.elapsed <= 500,
+        { ...q09, elapsed: q09.elapsed + 'ms' })
+
+      // AC-Q10 视觉：当前匹配与其余匹配颜色不同，查找条有阴影和圆角
+      await openFindDoc()
+      await menuKey('CmdOrCtrl+F')
+      await wait(250)
+      await setFind('alice')
+      await js(`document.getElementById('findNext').click(); await T.sleep(250); return true`)
+      const q10 = await js(`
+        const hit = document.querySelector('.find-hit')
+        const cur = document.querySelector('.find-hit.find-current')
+        const bs = getComputedStyle(document.getElementById('findbar'))
+        return {
+          hits: document.querySelectorAll('.find-hit').length,
+          hitBg: getComputedStyle(hit).backgroundColor,
+          curBg: getComputedStyle(cur).backgroundColor,
+          curColor: getComputedStyle(cur).color,
+          shadow: bs.boxShadow !== 'none',
+          radius: bs.borderRadius,
+        }`)
+      await shot('07-查找替换')
+      check('AC-Q10', '查找条与高亮符合设计规范：当前匹配加重、容器浮起',
+        q10.hits === 3 && q10.hitBg !== q10.curBg && q10.curColor === 'rgb(29, 29, 31)' && q10.shadow, q10)
+
+      // AC-Q11 查找、高亮、跳转都不改动文档内容
+      const q11 = await js(`return T.md()`)
+      await setFind('apple')
+      await js(`document.getElementById('findNext').click(); await T.sleep(150); document.getElementById('findPrev').click(); await T.sleep(200); return true`)
+      const q11b = await js(`return T.md()`)
+      check('AC-Q11', '查找和高亮不改动文档内容', q11 === q11b, { 前: q11.length, 后: q11b.length })
+
+      // 收尾：关闭查找条，恢复后面的测试要用的文档
+      await key('Escape')
+      await wait(200)
+      await load(tmpFile)
 
       // AC-F07 / F13 Ctrl+S 直接覆盖保存，UTF-8 无 BOM
       await js(`T.e().chain().focus('end').insertContent('保存校验ABC').run(); await T.sleep(400); return true`)
@@ -701,6 +961,7 @@ app.on('browser-window-created', (_e, win) => {
       await reload({ crash: true })
       await loadFile(draftDoc)
       const f15 = await js(`
+        for (let i = 0; i < 15 && !document.querySelector('.draft-banner'); i++) await T.sleep(100)
         const bar = document.querySelector('.draft-banner')
         const text = bar && bar.textContent
         bar?.querySelector('[data-a=restore]').click(); await T.sleep(500)
@@ -708,10 +969,19 @@ app.on('browser-window-created', (_e, win) => {
       // 丢弃后不再出现
       await js(`window.__test.loadDoc({ path: null, name: 'x.md', content: '' }); await T.sleep(300); return true`)
       await loadFile(draftDoc)
-      const f15b = await js(`document.querySelector('.draft-banner [data-a=drop]')?.click(); await T.sleep(300); return true`)
+      // 草稿提示条在读取草稿后才出现：等它出现再点，避免点空导致草稿没被清掉
+      const f15b = await js(`
+        for (let i = 0; i < 15 && !document.querySelector('.draft-banner'); i++) await T.sleep(100)
+        const bar = document.querySelector('.draft-banner')
+        if (!bar) return false
+        bar.querySelector('[data-a=drop]').click(); await T.sleep(400)
+        return !document.querySelector('.draft-banner')`)
       await js(`window.__test.loadDoc({ path: null, name: 'x.md', content: '' }); await T.sleep(300); return true`)
       await loadFile(draftDoc)
-      const f15c = await js(`return !document.querySelector('.draft-banner')`)
+      // 留出时间：如果草稿没清干净，提示条会在这段时间里重新出现
+      const f15c = await js(`
+        for (let i = 0; i < 12; i++) { await T.sleep(150); if (document.querySelector('.draft-banner')) return false }
+        return true`)
       check('AC-F15', '强制崩溃后重开同一文件：出现草稿提示，恢复后内容回来且为未保存；丢弃后不再出现',
         draftFiles.length > 0 && f15.banner && f15.restored && f15.dirty && f15b && f15c, { draftFiles: draftFiles.length, ...f15, noBannerAfterDrop: f15c })
 
