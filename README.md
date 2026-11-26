@@ -101,7 +101,7 @@ Paperwind 想把这几件事合在一起：
 
 > 系统要求：Windows 64 位。在 Windows 11 上开发和测试；半透明材质需要 Windows 11。
 
-1. 在 [Releases](../../releases) 页面下载最新版的 `Paperwind-Setup-0.2.2.exe`（约 117MB）。
+1. 在 [Releases](https://github.com/4lesz/Lee-Paperwind/releases) 页面下载最新版的 `Paperwind-Setup-0.2.2.exe`（约 117MB）。
 2. 双击安装。安装包**没有代码签名**，Windows 可能提示「Windows 已保护你的电脑」或「未知发布者」：点「更多信息」→「仍要运行」。
 3. 安装时可以选择安装位置，会在桌面和开始菜单创建「Paperwind」快捷方式。安装后在「已安装的应用」里，发布者显示为 Sizhuo Li。
 
