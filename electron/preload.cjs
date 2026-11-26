@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   openDialog: () => ipcRenderer.invoke('open-dialog'),
   readFile: (p) => ipcRenderer.invoke('read-file', p),
   saveFile: (opts) => ipcRenderer.invoke('save-file', opts),
+  renameFile: (opts) => ipcRenderer.invoke('rename-file', opts),
   pickImage: () => ipcRenderer.invoke('pick-image'),
   confirmDiscard: () => ipcRenderer.invoke('confirm-discard'),
   saveDraft: (key, md) => ipcRenderer.send('draft-save', key, md),

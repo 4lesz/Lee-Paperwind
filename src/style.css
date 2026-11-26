@@ -223,6 +223,22 @@ button {
 #docName {
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: text;
+  -webkit-app-region: no-drag;
+}
+/* 顶栏就地改名（PRD §3.1 v0.10） */
+.doc-name-input {
+  -webkit-app-region: no-drag;
+  width: 240px;
+  max-width: 36vw;
+  padding: 2px 8px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--fill);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  outline: none;
 }
 .dirty-dot {
   width: 8px;
@@ -444,6 +460,9 @@ body.no-outline .sheet {
 .formatbar .fmt-btn,
 .bubble .fmt-btn {
   border-radius: var(--r-full);
+}
+.bubble .fmt-btn.aa {
+  margin-right: 4px;
 }
 .fmt-btn.aa {
   min-width: 40px;
@@ -1607,6 +1626,46 @@ body[data-side='outline'] #outlinePanel {
 .file-item:hover {
   background: var(--fill);
 }
+/* 篇目树右键菜单与就地改名（PRD §3.1 v0.10） */
+.files-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 120px;
+  padding: 6px;
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--hairline), var(--shadow-s);
+}
+.files-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: default;
+}
+.files-menu button:hover {
+  background: var(--fill);
+}
+.file-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  outline: none;
+}
 /* 篇目树 §4.11 v1.4：每深一层缩进 16px；文章与同层文件夹的名称对齐（让出箭头的 16px + 间距 4px） */
 #filesList li {
   --depth: 0;
@@ -1678,6 +1737,11 @@ body[data-side='outline'] #outlinePanel {
 .files-empty p {
   margin: 0 0 12px;
   line-height: 1.5;
+}
+.files-empty .btn {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 12px;
 }
 .folder-foot {
   display: flex;

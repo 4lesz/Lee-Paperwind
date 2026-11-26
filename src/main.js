@@ -20,6 +20,7 @@ const state = {
   savedMd: '',
   dirty: false,
   mode: 'edit', // edit | source | read
+  named: false, // 用户给还没保存的文档起过名字（保存时不再按正文标题命名）
   index: {}, // 翻页索引（属性区里的 prev / next，已解析成文件路径，§4.13b）
 }
 
@@ -29,10 +30,12 @@ const paperEl = $('paper')
 // ---------------- 小工具 ----------------
 function debounce(fn, ms) {
   let t
-  return (...a) => {
+  const d = (...a) => {
     clearTimeout(t)
     t = setTimeout(() => fn(...a), ms)
   }
+  d.cancel = () => clearTimeout(t)
+  return d
 }
 const dirOf = (p) => (p ? p.replace(/[\\/][^\\/]*$/, '') : null)
 
@@ -161,6 +164,44 @@ btn('open').addEventListener('contextmenu', (e) => {
 if (api.mica) document.documentElement.classList.add('mica')
 document.querySelector('.drop-icon').innerHTML = icons.file
 
+// 顶栏文件名就地改名（PRD §3.1 v0.10）
+const docNameEl = $('docName')
+const docNameInput = $('docNameInput')
+function startRenameName() {
+  if (!docNameInput.hidden) return
+  docNameInput.value = state.name.replace(MD_NAME, '') || state.name
+  docNameEl.hidden = true
+  docNameInput.hidden = false
+  docNameInput.focus()
+  docNameInput.select()
+}
+async function endRenameName(commit) {
+  if (docNameInput.hidden) return
+  const v = docNameInput.value
+  docNameInput.hidden = true
+  docNameEl.hidden = false
+  if (!commit) return
+  const base = cleanName(v)
+  if (!base) {
+    toast('名字不能为空')
+    return
+  }
+  const name = MD_NAME.test(base) ? base : base + '.md'
+  if (name !== state.name) await renameDoc(name)
+}
+docNameEl.addEventListener('click', startRenameName)
+docNameInput.addEventListener('mousedown', (e) => e.stopPropagation())
+docNameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    endRenameName(true)
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    endRenameName(false)
+  }
+})
+docNameInput.addEventListener('blur', () => endRenameName(true))
+
 // ---------------- 文档状态 ----------------
 function currentMarkdown() {
   return state.mode === 'source' ? sourceText() : editor.storage.markdown.getMarkdown()
@@ -229,6 +270,7 @@ function loadDoc({ path = null, name = '未命名.md', content = '' }, { hash = 
   rememberPosition()
   state.path = path
   state.name = name
+  state.named = false
   state.eol = /\r\n/.test(content) ? '\r\n' : '\n'
   setDocDir(dirOf(path))
   // 载入不进撤销记录：否则打开文件 / 换篇后连按 Ctrl+Z 会把整篇撤销成空白（AC-F19）
@@ -303,6 +345,7 @@ async function checkDraft() {
     hideDraftBanner()
   }
   bar.querySelector('[data-a=drop]').onclick = () => {
+    afterChange.cancel() // 丢弃后别再被排队的草稿写入写回来
     api.clearDraft(key)
     hideDraftBanner()
   }
@@ -330,15 +373,57 @@ async function okToDiscard() {
   return true
 }
 
+// 缺省文件名「未命名.md」已被占用时依次试「未命名 2.md」「未命名 3.md」…（AC-F23）
+async function freePath(dir, name) {
+  const dot = name.lastIndexOf('.')
+  const base = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : '.md'
+  const join = (n) => dir.replace(/[\\/]+$/, '') + '\\' + n
+  let p = join(name)
+  for (let i = 2; (await api.statPath(p)).exists; i++) p = join(`${base} ${i}${ext}`)
+  return p
+}
+
+// 新文档第一次保存时用正文第一个标题做文件名（PRD §3.1 v0.9）：
+// 跳过代码块里的 #，去掉格式符号和 Windows 文件名非法字符，没有标题时返回 null（仍用「未命名.md」）
+function titleFromMd(md) {
+  const lines = splitFrontMatter(md).after.split('\n')
+  let fence = false
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fence = !fence
+      continue
+    }
+    if (fence) continue
+    const m = line.match(/^#{1,6}\s+(.+?)\s*#*\s*$/)
+    if (!m) continue
+    const name = m[1]
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/\*\*|__|~~|==|`|\*/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/[\\/:*?"<>|：]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[. ]+|[. ]+$/g, '')
+      .slice(0, 60)
+      .replace(/[. ]+$/, '')
+    if (name) return name + '.md'
+  }
+  return null
+}
+
 async function save(saveAs) {
   const content = currentMarkdown()
   // 保存失败时主进程会弹出系统对话框说明原因，这里只需保持未保存状态
-  // 新文档的另存为默认定位到当前篇目所在的文件夹
+  // 新文档按正文第一个标题命名；用户手动改过名就以手动改的为准；另存为默认定位到当前篇目所在的文件夹
+  const name = state.path ? state.name : state.named ? state.name : titleFromMd(content) || state.name
   const folder = folderNav.nav.dir
-  const defaultName = !state.path && folder ? folder.replace(/[\\/]+$/, '') + '\\' + state.name : state.name
+  const defaultName = !state.path && folder ? folder.replace(/[\\/]+$/, '') + '\\' + name : name
+  // 已经打开文件夹时，新文档直接存进这个文件夹，不弹保存框（PRD §3.1 v0.7）
+  const direct = !state.path && !saveAs && folder ? await freePath(folder, name) : null
   const oldPath = state.path
   const oldRaw = state.savedMd == null ? null : splitFrontMatter(state.savedMd).raw
-  const res = await api.saveFile({ path: state.path, content, saveAs, defaultName })
+  const res = await api.saveFile({ path: state.path || direct, content, saveAs, defaultName })
   if (!res || res.error) return false
   {
     api.clearDraft(draftKey())
@@ -354,6 +439,63 @@ async function save(saveAs) {
     toast(synced.length ? `已保存 · 同步了${synced.join('、')}` : '已保存')
     return true
   }
+}
+
+// 改名（PRD §3.1 v0.10）：未保存的新文档只改待保存的名字；已保存的文档连磁盘文件名一起改
+const MD_NAME = /\.(md|markdown|mdown|mkd|txt)$/i
+function cleanName(raw) {
+  return String(raw || '')
+    .replace(/[\\/:*?"<>|：]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+async function renamePath(oldPath, rawName) {
+  const base = cleanName(rawName)
+  if (!base) {
+    toast('名字不能为空')
+    return false
+  }
+  const name = MD_NAME.test(base) ? base : base + '.md'
+  if (state.path && sameFile(state.path, oldPath)) return renameDoc(name)
+  const res = await api.renameFile({ path: oldPath, name })
+  if (!res || res.error) {
+    toast(res && res.error === 'exists' ? '已经有同名文件了' : '改名失败')
+    return false
+  }
+  folderNav.setDir(dirOf(res.path), { force: true })
+  toast('已改名')
+  return true
+}
+async function renameDoc(name) {
+  if (name === state.name) return true
+  if (!state.path) {
+    state.name = name
+    state.named = true
+    reportState()
+    afterChange() // 名字变了也顺手把草稿写一次，标题栏和重启后的提示保持一致
+    toast('保存时用这个文件名')
+    return true
+  }
+  const oldPath = state.path
+  const md = currentMarkdown()
+  const res = await api.renameFile({ path: oldPath, name })
+  if (!res || res.error) {
+    toast(res && res.error === 'exists' ? '已经有同名文件了' : '改名失败')
+    return false
+  }
+  const draftBefore = draftKey()
+  api.clearDraft(draftBefore)
+  state.path = res.path
+  state.name = res.name
+  setDocDir(dirOf(res.path))
+  folderNav.setDir(dirOf(res.path), { force: true })
+  // 改名不动内容，已保存基准保持不变；有未保存改动时把草稿改挂到新名字下
+  if (state.dirty) afterChange()
+  reportState()
+  const raw = state.savedMd == null ? splitFrontMatter(md).raw : splitFrontMatter(state.savedMd).raw
+  const synced = await syncBacklinks(oldPath, res.path, raw, raw)
+  toast(synced.length ? `已改名 · 同步了${synced.join('、')}` : '已改名')
+  return true
 }
 
 async function openViaDialog() {
@@ -524,6 +666,8 @@ const folderNav = createFolderNav({
   onTurn: (side) => goSide(side),
   onEditIndex: (side) => editIndex(side),
   onMissing: (x) => api.resolveLink(state.path, x.link), // 与文中链接相同的「找不到」提示（§4b）
+  onNew: () => newDoc(), // 空文件夹里的「新建一篇」（§3.6 v0.7）
+  onRename: (p, v) => renamePath(p, v), // 篇目树右键重命名（§3.1 v0.10）
   onListed: async (nav) => {
     refreshIndex(true) // 篇目变化后，指定的目标是否存在可能随之变化
     // 默认段：有 2 篇及以上时显示篇目；用户手动选过则尊重选择（§4.11）
@@ -606,7 +750,14 @@ async function gotoFile(p, { hash = '', mode = null, turn = true, root = null, d
 async function openFolder(dir) {
   const res = await api.listFolder(dir)
   const all = res.all || res.files || []
-  if (!all.length) return toast('这个文件夹里没有 Markdown 文件', 'info')
+  // 空文件夹也能打开：篇目树里给「新建一篇」，方便马上开工（PRD §3.6 v0.7）
+  if (!all.length) {
+    api.memorySet('roots', res.dir, {})
+    await folderNav.setDir(res.dir, { root: true })
+    setSideTab('files')
+    toast('这个文件夹里还没有 Markdown 文件，点「新建一篇」开始写', 'info')
+    return
+  }
   // 记住读到哪里：回到上次那一篇（可能在子文件夹里）和当时的模式（§6.1b）；没有记录时打开第一层的第一篇
   const mem = await api.memoryGet('folders', dir)
   api.memorySet('roots', res.dir, {}) // 记住打开过的文件夹：以后单独打开其中一篇时仍以它为篇目树的根

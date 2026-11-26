@@ -121,7 +121,13 @@ function createWindow(filePath = null) {
     }
   })
 
-  win.webContents.on('context-menu', (_e, params) => showContextMenu(win, params))
+  win.webContents.on('context-menu', async (_e, params) => {
+    // 篇目树里的右键由页面自己处理（「重命名」菜单），不再弹系统编辑菜单
+    const inTree = await win.webContents
+      .executeJavaScript(`!!document.elementFromPoint(${params.x}, ${params.y})?.closest('#filesList')`)
+      .catch(() => false)
+    if (!inTree) showContextMenu(win, params)
+  })
 
   win.on('close', async (e) => {
     const st = winState.get(win.id)
@@ -339,6 +345,15 @@ ipcMain.on('draft-save', (e, key, md) => {
     fsSync.renameSync(tmp, file) // 先写临时文件再改名，避免写到一半损坏
   } catch {}
 })
+// 删除草稿：Windows 上文件刚被改名或正被杀毒软件扫描时删除会短暂失败，重试几次
+async function removeDraft(file) {
+  for (let i = 0; i < 5 && fsSync.existsSync(file); i++) {
+    try {
+      await fs.rm(file, { force: true })
+    } catch {}
+    if (fsSync.existsSync(file)) await new Promise((r) => setTimeout(r, 100))
+  }
+}
 // 有路径的文件：草稿属于另一个仍打开着、有未保存修改的窗口时，不提示恢复，也不清掉
 function draftOwnedByOther(e, key) {
   const me = winOf(e)
@@ -377,16 +392,16 @@ ipcMain.handle('draft-load', async (e, key) => {
 ipcMain.on('draft-clear', (e, key) => {
   const w = winOf(e)
   if (key === UNTITLED && w) {
-    fs.rm(draftFile(sessionKey(w)), { force: true }).catch(() => {})
+    removeDraft(draftFile(sessionKey(w)))
     const orphan = adopted.get(w.id)
     if (orphan) {
       adopted.delete(w.id)
-      fs.rm(draftFile(orphan), { force: true }).catch(() => {})
+      removeDraft(draftFile(orphan))
     }
     return
   }
   if (draftOwnedByOther(e, key)) return
-  fs.rm(draftFile(key), { force: true }).catch(() => {})
+  removeDraft(draftFile(key))
 })
 
 ipcMain.handle('open-dialog', async (e) => {
@@ -434,6 +449,24 @@ ipcMain.handle('save-file', async (e, { path: filePath, content, saveAs, default
     await showError(winOf(e), `无法保存“${path.basename(target)}”`, err)
     return { error: true }
   }
+  return { path: target, name: path.basename(target) }
+})
+
+ipcMain.handle('rename-file', async (e, { path: oldPath, name }) => {
+  if (!oldPath) return { error: true }
+  const base = path.basename(String(name || '')).replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!base || base === '.' || base === '..') return { error: 'name' }
+  const target = path.join(path.dirname(oldPath), MD_EXT.test(base) ? base : base + '.md')
+  if (target === oldPath) return { path: oldPath, name: path.basename(oldPath) }
+  if (fsSync.existsSync(target)) return { error: 'exists' }
+  try {
+    await fs.rename(oldPath, target)
+  } catch (err) {
+    await showError(winOf(e), `无法重命名为“${path.basename(target)}”`, err)
+    return { error: true }
+  }
+  // 别的窗口里开着的还是旧路径时跟着更新，关窗口时不会误判成「文件没了」
+  for (const [id, st] of winState) if (st.path === oldPath) winState.set(id, { ...st, path: target })
   return { path: target, name: path.basename(target) }
 })
 

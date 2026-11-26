@@ -29,7 +29,7 @@ const TOOLBAR_LAYOUT = [
   ['quote', 'code', 'codeBlock', 'table', 'image', 'link', 'hr'],
   ['@context'],
 ]
-const BUBBLE_LAYOUT = ['bold', 'italic', 'underline', 'strike', 'highlight', 'code', 'link']
+const BUBBLE_LAYOUT = ['@style', 'bold', 'italic', 'underline', 'strike', 'highlight', 'code', 'link']
 
 // 「Aa」段落样式（同苹果备忘录）
 const BLOCK_STYLES = [
@@ -68,19 +68,11 @@ export function buildToolbar({ toolbarEl, bubbleEl, getEditor, ctx, languages })
   const buttons = []
   let contextGroup
 
-  // 「Aa」按钮
-  const styleBtn = document.createElement('button')
-  styleBtn.type = 'button'
-  styleBtn.className = 'fmt-btn aa'
-  styleBtn.dataset.cmd = 'style'
-  styleBtn.dataset.tip = '段落样式'
-  styleBtn.dataset.key = 'Ctrl+Alt+0~3'
-  styleBtn.textContent = 'Aa'
-  styleBtn.addEventListener('mousedown', (ev) => ev.preventDefault())
-  styleBtn.addEventListener('click', () => {
+  // 「Aa」按钮：格式栏和浮动菜单各一个，共用同一份下拉（PRD §3.2 v0.8、设计规范 §4.4）
+  function openStyles(anchor) {
     const e = getEditor()
     openPopover(
-      styleBtn,
+      anchor,
       BLOCK_STYLES.map((s) => ({
         html: `<span class="${s.cls}">${s.label}</span>`,
         checked: s.is(e),
@@ -88,7 +80,21 @@ export function buildToolbar({ toolbarEl, bubbleEl, getEditor, ctx, languages })
       })),
       { className: 'styles' }
     )
-  })
+  }
+  function makeStyleButton() {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'fmt-btn aa'
+    b.dataset.cmd = 'style'
+    b.dataset.tip = '段落样式'
+    b.dataset.key = 'Ctrl+Alt+0~3'
+    b.textContent = 'Aa'
+    b.addEventListener('mousedown', (ev) => ev.preventDefault()) // 保持编辑器选区
+    b.addEventListener('click', () => openStyles(b))
+    return b
+  }
+  const styleBtn = makeStyleButton()
+  const bubbleStyleBtn = makeStyleButton()
 
   for (const group of TOOLBAR_LAYOUT) {
     const g = document.createElement('div')
@@ -109,6 +115,10 @@ export function buildToolbar({ toolbarEl, bubbleEl, getEditor, ctx, languages })
   }
 
   for (const id of BUBBLE_LAYOUT) {
+    if (id === '@style') {
+      bubbleEl.appendChild(bubbleStyleBtn)
+      continue
+    }
     const b = makeButton(id, defs[id])
     b.addEventListener('click', () => defs[id].run(getEditor()))
     bubbleEl.appendChild(b)
@@ -162,7 +172,9 @@ export function buildToolbar({ toolbarEl, bubbleEl, getEditor, ctx, languages })
       }
     }
     const inCode = e.isActive('codeBlock')
-    styleBtn.classList.toggle('active', BLOCK_STYLES.slice(0, 3).some((s) => s.is(e)) || inCode)
+    const styleOn = BLOCK_STYLES.slice(0, 3).some((s) => s.is(e)) || inCode
+    styleBtn.classList.toggle('active', styleOn)
+    bubbleStyleBtn.classList.toggle('active', styleOn)
 
     const ctxType = inCode ? 'code' : e.isActive('table') ? 'table' : null
     if (ctxType === 'code') {

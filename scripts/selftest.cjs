@@ -235,18 +235,20 @@ app.on('browser-window-created', (_e, win) => {
       // ---------- AC-E09 浮动菜单 ----------
       const e09 = await js(`
         document.getElementById('paper').scrollTop = 0; await T.sleep(100)
-        T.select('普通文字'); T.e().commands.focus(); await T.sleep(400)
-        const box = document.querySelector('[data-tippy-root]')
-        const shown = !!box && getComputedStyle(box).visibility !== 'hidden' && box.querySelector('#bubble') && box.getBoundingClientRect().height > 0
+        T.select('普通文字'); T.e().commands.focus()
+        const vis = () => { const box = document.querySelector('[data-tippy-root]'); return !!box && getComputedStyle(box).visibility !== 'hidden' && !!box.querySelector('#bubble') && box.getBoundingClientRect().height > 0 }
+        let shown = false
+        for (let i = 0; i < 20 && !shown; i++) { await T.sleep(100); shown = vis() }
         return { shown }`)
       await shot('03-浮动菜单')
       const e09b = await js(`
-        const p = T.findText('SELECT name'); T.e().commands.setTextSelection({ from: p, to: p + 6 }); await T.sleep(400)
-        const box = document.querySelector('[data-tippy-root]')
-        const inCode = !!box && getComputedStyle(box).visibility !== 'hidden'
-        T.e().commands.setTextSelection(p); await T.sleep(400)
-        const box2 = document.querySelector('[data-tippy-root]')
-        const collapsed = !!box2 && getComputedStyle(box2).visibility !== 'hidden'
+        const shownNow = () => { const box = document.querySelector('[data-tippy-root]'); return !!box && getComputedStyle(box).visibility !== 'hidden' }
+        const p = T.findText('SELECT name'); T.e().commands.setTextSelection({ from: p, to: p + 6 })
+        let inCode = true
+        for (let i = 0; i < 12 && inCode; i++) { await T.sleep(100); inCode = shownNow() }
+        T.e().commands.setTextSelection(p)
+        let collapsed = true
+        for (let i = 0; i < 12 && collapsed; i++) { await T.sleep(100); collapsed = shownNow() }
         return { inCode, collapsed }`)
       check('AC-E09', '选中文字出现浮动菜单；代码块中、无选区时不出现', e09.shown && !e09b.inCode && !e09b.collapsed, { ...e09, ...e09b })
 
@@ -260,6 +262,31 @@ app.on('browser-window-created', (_e, win) => {
         T.e().commands.undo()
         return { changed, undone, redone }`)
       check('AC-E12', '撤销/重做对格式栏操作有效', e12.changed && e12.undone && e12.redone, e12)
+
+      // ---------- AC-E17 浮动菜单里的「Aa」段落样式 ----------
+      const e17 = await js(`
+        const beforeMd = T.md()
+        T.select('普通文字'); T.e().commands.focus()
+        let aa = null
+        for (let i = 0; i < 20 && !aa; i++) { await T.sleep(100); aa = document.querySelector('#bubble [data-cmd=style]') }
+        const first = document.querySelector('#bubble .fmt-btn')
+        const bubbleHasAa = !!aa && aa === first && aa.textContent.trim() === 'Aa'
+        if (!aa) return { bubbleHasAa }
+        aa.click(); await T.sleep(150)
+        const pop = document.querySelector('.popover.styles')
+        const labels = pop ? [...pop.querySelectorAll('.pop-item')].map(b => b.textContent.trim()) : []
+        const hasStyles = !!pop && labels.length === 5 && labels.includes('标题') && labels.includes('正文')
+        const headBtn = pop && [...pop.querySelectorAll('.pop-item')].find(b => b.textContent.includes('标题'))
+        if (headBtn) headBtn.click()
+        await T.sleep(300)
+        const toHeading = T.e().isActive('heading', { level: 1 })
+        const selKept = T.e().state.selection.from < T.e().state.selection.to
+        const popClosed = !document.querySelector('.popover.styles')
+        T.e().commands.undo(); await T.sleep(150)
+        const backToP = !T.e().isActive('heading') && T.md() === beforeMd
+        return { bubbleHasAa, hasStyles, labels, toHeading, selKept, popClosed, backToP }`)
+      check('AC-E17', '选中文字后浮动菜单最左端有「Aa」，可从下拉切换标题/正文，选区保持',
+        e17.bubbleHasAa && e17.hasStyles && e17.toHeading && e17.selKept && e17.popClosed && e17.backToP, e17)
 
       // ---------- AC-E13 表格（自动部分） ----------
       const e13 = await js(`
@@ -753,9 +780,278 @@ app.on('browser-window-created', (_e, win) => {
       const q11b = await js(`return T.md()`)
       check('AC-Q11', '查找和高亮不改动文档内容', q11 === q11b, { 前: q11.length, 后: q11b.length })
 
-      // 收尾：关闭查找条，恢复后面的测试要用的文档
+      // 收尾：关闭查找条（恢复后面的测试要用的文档放在本段测试之后）
       await key('Escape')
       await wait(200)
+
+      // ---------- 空文件夹与新建（v0.2.1，验收标准 §8h） ----------
+      // 编号对照 docs/验收标准.md §8h：AC-F20 / F21 / F22 / F23 / F25
+      // AC-F21b（有未保存修改时点「新建一篇」先弹确认框）要真点系统对话框，太脆，不写自动项；
+      // 「保存 / 不保存 / 取消」三支已由 AC-F10 覆盖。
+      const vSame = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+      const vDir = path.join(outDir, 'v021 空文件夹')
+      for (let i = 0; i < 3; i++) {
+        try {
+          fs.rmSync(vDir, { recursive: true, force: true })
+          break
+        } catch {
+          await wait(300)
+        }
+      }
+      fs.mkdirSync(vDir, { recursive: true })
+      fs.writeFileSync(path.join(vDir, '说明.txt'), '不是 Markdown 文件', 'utf8')
+
+      // AC-F20 打开没有任何 Markdown 的文件夹：侧栏切到「篇目」，显示空状态和「新建一篇」，不弹错误，当前文档不变
+      const beforeF20 = await js(`return { name: document.getElementById('docName').textContent, path: window.__test.state.path, md: T.md() }`)
+      const boxBefore20 = fake.box.length
+      await js(`await window.__test.openFolder(${JSON.stringify(vDir)}); await T.sleep(500); return true`)
+      const f20 = await js(`
+        const tab = document.querySelector('#sideSlot .seg-item[data-value=files]')
+        const toastEl = document.querySelector('.toast.show')
+        return {
+          side: document.body.dataset.side,
+          tabOn: !!tab && tab.classList.contains('on') && tab.getAttribute('aria-checked') === 'true',
+          empty: document.querySelector('#filesList .files-empty p')?.textContent || null,
+          btn: document.querySelector('[data-new-file]')?.textContent || null,
+          foot: document.querySelector('#folderFoot .folder-name')?.textContent || null,
+          footTitle: document.querySelector('#folderFoot')?.title || null,
+          toast: toastEl ? toastEl.textContent : null,
+          toastKind: document.querySelector('.toast.show .toast-icon')?.className || null,
+          dir: window.__test.folderNav.nav.dir,
+          name: document.getElementById('docName').textContent,
+          path: window.__test.state.path,
+          md: T.md(),
+        }`)
+      await shot('08-空文件夹')
+      check('AC-F20', '打开没有任何 Markdown 的文件夹：侧栏切到「篇目」，显示「这个文件夹里还没有 Markdown 文件」和「新建一篇」按钮，不弹错误，当前文档不变',
+        f20.side === 'files' && f20.tabOn && /还没有 Markdown 文件/.test(f20.empty || '') && f20.btn === '新建一篇' &&
+          vSame(f20.dir, vDir) && f20.foot === path.basename(vDir) && vSame(f20.footTitle, vDir) &&
+          /info/.test(f20.toastKind || '') && !/错误|失败|无法/.test(f20.toast || '') &&
+          fake.box.length === boxBefore20 && f20.name === beforeF20.name && f20.path === beforeF20.path && f20.md === beforeF20.md,
+        { side: f20.side, tabOn: f20.tabOn, empty: f20.empty, btn: f20.btn, foot: f20.foot, footTitle: f20.footTitle, toast: f20.toast, toastKind: f20.toastKind, dir: f20.dir, path: f20.path, name: f20.name, mdLen: f20.md.length, boxCalls: fake.box.length - boxBefore20 })
+
+      // AC-F21 点「新建一篇」：得到可输入的新文档（顶栏暂为「未命名.md」），篇目树仍指向那个空文件夹
+      await js(`T.click('[data-new-file]'); await T.sleep(400); return true`)
+      const f21clicked = await js(`return document.getElementById('docName').textContent`)
+      await type('# 开篇\n空文件夹里新建的文字')
+      const f21 = await js(`return {
+        name: document.getElementById('docName').textContent,
+        md: T.md(),
+        editable: T.e().isEditable,
+        dirty: T.dirty(),
+        dir: window.__test.folderNav.nav.dir,
+        foot: document.querySelector('#folderFoot .folder-name')?.textContent || null,
+        footTitle: document.querySelector('#folderFoot')?.title || null,
+        empty: document.querySelector('#filesList .files-empty p')?.textContent || null,
+      }`)
+      check('AC-F21', '空文件夹里点「新建一篇」：得到可输入的新文档（顶栏暂为「未命名.md」），篇目树仍指向该文件夹',
+        f21clicked === '未命名.md' && f21.name === '未命名.md' && f21.editable && f21.dirty &&
+          f21.md.startsWith('# 开篇') && f21.md.includes('空文件夹里新建的文字') &&
+          vSame(f21.dir, vDir) && f21.foot === path.basename(vDir) && vSame(f21.footTitle, vDir) && /还没有 Markdown 文件/.test(f21.empty || ''),
+        f21)
+
+      // AC-F22 新文档 Ctrl+S：不弹保存框，按正文第一个标题存为该文件夹下的「开篇.md」
+      const md22 = await js(`return T.md()`)
+      const saveCallsBefore = fake.save.length
+      const boxBefore22 = fake.box.length
+      await menuKey('CmdOrCtrl+S')
+      await wait(800)
+      const f22 = await js(`return {
+        name: document.getElementById('docName').textContent,
+        dirty: T.dirty(),
+        toast: (document.querySelector('.toast.show') || {}).textContent || null,
+        files: [...document.querySelectorAll('#filesList .file-item')].map((li) => li.title),
+      }`)
+      const disk22 = fs.existsSync(path.join(vDir, '开篇.md')) ? fs.readFileSync(path.join(vDir, '开篇.md'), 'utf8') : null
+      await shot('09-新文档直存文件夹')
+      check('AC-F22', '已打开文件夹时新建文档按 Ctrl+S：不弹保存框，按正文第一个标题存为「开篇.md」，提示「已保存」，顶栏和篇目里都变成该篇',
+        fake.save.length === saveCallsBefore && fake.box.length === boxBefore22 && disk22 === md22 && f22.name === '开篇.md' && !f22.dirty &&
+          /已保存/.test(f22.toast || '') && f22.files.includes('开篇.md'),
+        { saveCalls: fake.save.length - saveCallsBefore, boxCalls: fake.box.length - boxBefore22, name: f22.name, dirty: f22.dirty, toast: f22.toast, files: f22.files, diskLen: disk22 ? disk22.length : null, mdLen: md22.length })
+
+      // AC-F23 文件夹里已有「开篇.md」时再新建一篇、写同样的标题并保存：存为「开篇 2.md」，原文件不被覆盖
+      fs.writeFileSync(path.join(vDir, '开篇.md'), '原有内容', 'utf8')
+      await wait(400)
+      const boxBefore23 = fake.box.length
+      await menuKey('CmdOrCtrl+N')
+      await wait(500)
+      await type('# 开篇\n第二次新建的文字')
+      await menuKey('CmdOrCtrl+S')
+      await wait(800)
+      const f23 = await js(`return {
+        name: document.getElementById('docName').textContent,
+        dirty: T.dirty(),
+        toast: (document.querySelector('.toast.show') || {}).textContent || null,
+        files: [...document.querySelectorAll('#filesList .file-item')].map((li) => li.title),
+      }`)
+      const secondPath = path.join(vDir, '开篇 2.md')
+      const secondDisk = fs.existsSync(secondPath) ? fs.readFileSync(secondPath, 'utf8') : null
+      const firstDisk = fs.readFileSync(path.join(vDir, '开篇.md'), 'utf8')
+      check('AC-F23', '文件夹里已有「开篇.md」时再次新建并保存：存为「开篇 2.md」，原有的「开篇.md」不被覆盖',
+        fake.box.length === boxBefore23 && !!secondDisk && secondDisk.includes('第二次新建的文字') && firstDisk === '原有内容' &&
+          f23.name === '开篇 2.md' && !f23.dirty && f23.files.includes('开篇 2.md'),
+        { name: f23.name, dirty: f23.dirty, files: f23.files, firstLen: firstDisk.length, secondLen: secondDisk ? secondDisk.length : null })
+
+      // AC-F26 标题命名的清洗与兜底：代码块里的 # 不算标题、格式符号和非法字符去掉、纯符号/无标题退回「未命名.md」、超长截断
+      const md26 = '```js\n# 注释不是标题\n```\n\n# **第一章**：开始\n\n正文\n'
+      await menuKey('CmdOrCtrl+N')
+      await wait(400)
+      await js(`window.__test.loadDoc({ path: null, name: '未命名.md', content: ${JSON.stringify(md26)} }); await T.sleep(400); return true`)
+      await menuKey('CmdOrCtrl+S')
+      await wait(800)
+      const f26a = await js(`return { name: document.getElementById('docName').textContent, dirty: T.dirty() }`)
+      const f26aDisk = fs.existsSync(path.join(vDir, '第一章 开始.md')) ? fs.readFileSync(path.join(vDir, '第一章 开始.md'), 'utf8') : null
+
+      const longTitle = '长'.repeat(80)
+      await menuKey('CmdOrCtrl+N')
+      await wait(400)
+      await js(`window.__test.loadDoc({ path: null, name: '未命名.md', content: ${JSON.stringify('# ' + longTitle + '\n\n正文\n')} }); await T.sleep(400); return true`)
+      await menuKey('CmdOrCtrl+S')
+      await wait(800)
+      const longFile = fs.readdirSync(vDir).find((n) => n.startsWith('长'))
+      const f26b = await js(`return { name: document.getElementById('docName').textContent, dirty: T.dirty() }`)
+
+      await menuKey('CmdOrCtrl+N')
+      await wait(400)
+      await js(`window.__test.loadDoc({ path: null, name: '未命名.md', content: ${JSON.stringify('# **\n\n正文\n')} }); await T.sleep(400); return true`)
+      await menuKey('CmdOrCtrl+S')
+      await wait(800)
+      const f26c = await js(`return { name: document.getElementById('docName').textContent, dirty: T.dirty() }`)
+      const f26cDisk = fs.existsSync(path.join(vDir, '未命名.md')) ? fs.readFileSync(path.join(vDir, '未命名.md'), 'utf8') : null
+      check('AC-F26', '标题命名的清洗与兜底：代码块里的 # 不算标题；「# **第一章**：开始」→「第一章 开始.md」；超长标题截断到 60 字；标题只剩符号时退回「未命名.md」',
+        f26a.name === '第一章 开始.md' && !!f26aDisk && f26aDisk.includes('第一章') && !f26a.dirty &&
+          !!longFile && longFile.length === '长'.repeat(60).length + 3 && f26b.name === longFile && !f26b.dirty &&
+          f26c.name === '未命名.md' && !!f26cDisk && f26cDisk.includes('正文') && !f26c.dirty &&
+          !fs.existsSync(path.join(vDir, '注释不是标题.md')),
+        { cleaned: f26a, cleanedDiskLen: f26aDisk ? f26aDisk.length : null, longName: longFile, longTitleLen: f26b.name.length, fallback: f26c })
+
+      // AC-F25 保存后篇目树按新文件刷新，两篇都能点开；window.__test.folderNav 里能查到该文件夹
+      const f25 = await js(`return {
+        dir: window.__test.folderNav.nav.dir,
+        files: window.__test.folderNav.nav.files.map((f) => f.path),
+        current: document.getElementById('docName').textContent,
+      }`)
+      const f25clicked = await js(`const li = [...document.querySelectorAll('#filesList .file-item')].find((x) => x.title === '开篇.md')
+        if (li) { li.click(); await T.sleep(1200) }
+        return !!li`)
+      const f25opened = await js(`return { path: window.__test.state.pendingPath || window.__test.state.path, name: document.getElementById('docName').textContent }`)
+      check('AC-F25', '在空文件夹新建并保存后，篇目树按新文件刷新、新文件可以点开，folderNav 指向该文件夹',
+        f25clicked && vSame(f25.dir, vDir) &&
+          f25.files.some((p) => vSame(p, path.join(vDir, '开篇.md'))) && f25.files.some((p) => vSame(p, path.join(vDir, '开篇 2.md'))) &&
+          vSame(f25opened.path, path.join(vDir, '开篇.md')) && f25opened.name === '开篇.md',
+        { ...f25, opened: f25opened })
+
+      // AC-F27 顶栏文件名点击就地改名（v0.2.2）：未保存时先改待保存名，Ctrl+S 就用它；已保存时连磁盘文件名一起改
+      // 输入框里的名字直接设值（真实逐字输入对 <input> 在拿不到焦点时会打进编辑器，不适合用来改名）
+      const fillName = (sel, v) => js(`const i = document.querySelector(${JSON.stringify(sel)})
+        if (!i) throw new Error('找不到 ' + ${JSON.stringify(sel)})
+        i.value = ${JSON.stringify(v)}
+        i.dispatchEvent(new Event('input', { bubbles: true }))
+        return true`)
+      await menuKey('CmdOrCtrl+N')
+      await wait(400)
+      await js(`T.click('#docName'); await T.sleep(200); return !document.getElementById('docNameInput').hidden`)
+      await fillName('#docNameInput', '顶栏改名')
+      await key('Return')
+      await wait(500)
+      const f27a = await js(`return {
+        name: document.getElementById('docName').textContent,
+        open: !document.getElementById('docNameInput').hidden,
+        toast: (document.querySelector('.toast.show') || {}).textContent || null,
+      }`)
+      await menuKey('CmdOrCtrl+S')
+      await wait(800)
+      const f27aDisk = fs.existsSync(path.join(vDir, '顶栏改名.md'))
+      await js(`T.click('#docName'); await T.sleep(200); return true`)
+      await fillName('#docNameInput', '改名后')
+      await key('Return')
+      await wait(800)
+      const f27 = await js(`return {
+        name: document.getElementById('docName').textContent,
+        path: window.__test.state.path,
+        dirty: T.dirty(),
+        files: [...document.querySelectorAll('#filesList .file-item')].map((li) => li.title),
+      }`)
+      const f27oldGone = !fs.existsSync(path.join(vDir, '顶栏改名.md'))
+      const f27newDisk = fs.existsSync(path.join(vDir, '改名后.md'))
+      check('AC-F27', '点顶栏文件名就地改名：未保存的新文档改名后按 Ctrl+S 直接存成该名字；已保存的文档改名后磁盘文件名和篇目树一起更新',
+        f27a.name === '顶栏改名.md' && !f27a.open && /保存时用这个文件名/.test(f27a.toast || '') && f27aDisk &&
+          f27.name === '改名后.md' && /改名后\.md$/i.test(f27.path || '') && !f27.dirty && f27.files.includes('改名后.md') &&
+          f27oldGone && f27newDisk,
+        { unsaved: f27a, savedOnDisk: f27aDisk, renamed: f27, oldGone: f27oldGone, newDisk: f27newDisk })
+
+      // AC-F28 篇目树右键「重命名」：就地改名，磁盘文件名和列表一起更新（改的不是当前篇）
+      await js(`const li = [...document.querySelectorAll('#filesList .file-item')].find((x) => x.title === '开篇 2.md')
+        li.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 260, clientY: 240 }))
+        await T.sleep(200)
+        return !!document.querySelector('.files-menu')`)
+      const f28menu = await js(`return document.querySelector('.files-menu button')?.textContent || null`)
+      await js(`document.querySelector('.files-menu button').click(); await T.sleep(300); return true`)
+      const f28input = await js(`const i = document.querySelector('.file-rename')
+        return { has: !!i, value: i ? i.value : null, focused: i === document.activeElement }`)
+      await fillName('.file-rename', '篇目改名')
+      await key('Return')
+      await wait(800)
+      const f28 = await js(`return {
+        files: [...document.querySelectorAll('#filesList .file-item')].map((li) => li.title),
+        menu: !!document.querySelector('.files-menu'),
+        input: !!document.querySelector('.file-rename'),
+        name: document.getElementById('docName').textContent,
+      }`)
+      const f28oldGone = !fs.existsSync(path.join(vDir, '开篇 2.md'))
+      const f28newDisk = fs.existsSync(path.join(vDir, '篇目改名.md'))
+      check('AC-F28', '篇目树右键文件显示「重命名」，就地输入后磁盘文件名和列表一起更新，当前打开的那篇不受影响',
+        f28menu === '重命名' && f28input.has && f28input.value === '开篇 2' && f28input.focused &&
+          f28.files.includes('篇目改名.md') && !f28.files.includes('开篇 2.md') && !f28.menu && !f28.input &&
+          f28.name === '改名后.md' && f28oldGone && f28newDisk,
+        { menu: f28menu, input: f28input, after: f28, oldGone: f28oldGone, newDisk: f28newDisk })
+
+      // AC-F29 改名的异常处理：重名提示「已经有同名文件了」不改；非法字符换成空格；不写扩展名自动补 .md
+      await js(`T.click('#docName'); await T.sleep(200); return true`)
+      await fillName('#docNameInput', '篇目改名')
+      await key('Return')
+      await wait(600)
+      const f29exists = await js(`return {
+        name: document.getElementById('docName').textContent,
+        toast: (document.querySelector('.toast.show') || {}).textContent || null,
+        open: !document.getElementById('docNameInput').hidden,
+      }`)
+      const f29oldKept = fs.existsSync(path.join(vDir, '改名后.md'))
+      await js(`T.click('#docName'); await T.sleep(200); return true`)
+      await fillName('#docNameInput', '非法/名字:测试')
+      await key('Return')
+      await wait(800)
+      const f29 = await js(`return {
+        name: document.getElementById('docName').textContent,
+        path: window.__test.state.path,
+        files: [...document.querySelectorAll('#filesList .file-item')].map((li) => li.title),
+      }`)
+      const f29disk = fs.existsSync(path.join(vDir, '非法 名字 测试.md'))
+      check('AC-F29', '改名遇到重名提示「已经有同名文件了」并保持原名；非法字符换成空格；不写扩展名自动补 .md',
+        f29exists.name === '改名后.md' && /已经有同名文件了/.test(f29exists.toast || '') && !f29exists.open &&
+          f29oldKept &&
+          f29.name === '非法 名字 测试.md' && /非法 名字 测试\.md$/i.test(f29.path || '') &&
+          f29.files.includes('非法 名字 测试.md') && f29disk,
+        { exists: f29exists, oldKept: f29oldKept, illegal: f29, disk: f29disk })
+
+      // 清理：先解除对该临时文件夹的关注，再删除临时文件与临时文件夹（Windows 上偶发 ENOTEMPTY，重试几次）
+      await js(`await window.__test.folderNav.setDir(null); await T.sleep(200); return true`)
+      for (let i = 0; i < 6; i++) {
+        try {
+          fs.rmSync(vDir, { recursive: true, force: true })
+          break
+        } catch {
+          await wait(300)
+        }
+      }
+      if (fs.existsSync(vDir)) {
+        await wait(500)
+        try {
+          fs.rmSync(vDir, { recursive: true, force: true })
+        } catch {}
+      }
+
+      // 恢复后面的测试要用的文档
       await load(tmpFile)
 
       // AC-F07 / F13 Ctrl+S 直接覆盖保存，UTF-8 无 BOM
@@ -853,6 +1149,22 @@ app.on('browser-window-created', (_e, win) => {
       }
       const loadFile = async (p) => {
         await js(`const d = await window.api.readFile(${JSON.stringify(p)}); window.__test.loadDoc(d); await T.sleep(500); return true`)
+      }
+      // 草稿文件在主进程里按 sha1(键名) 命名，直接看磁盘更可靠（「丢弃」是异步删除）
+      const crypto = require('node:crypto')
+      const draftPathOf = (key) => path.join(outDir, 'userdata', 'drafts', crypto.createHash('sha1').update(key).digest('hex') + '.json')
+      const waitDraftGone = async (key, ms = 2000) => {
+        const f = draftPathOf(key)
+        for (let t = 0; t < ms && fs.existsSync(f); t += 100) await wait(100)
+        return !fs.existsSync(f)
+      }
+      const draftsOnDisk = () => {
+        const dir = path.join(outDir, 'userdata', 'drafts')
+        try {
+          return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => {
+            try { const d = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); return { key: d.key, time: d.time } } catch { return { key: f } }
+          })
+        } catch { return [] }
       }
 
       // AC-M04 / M05 / M06 第三方写法、HTML 片段、代码块内容
@@ -974,16 +1286,20 @@ app.on('browser-window-created', (_e, win) => {
         for (let i = 0; i < 15 && !document.querySelector('.draft-banner'); i++) await T.sleep(100)
         const bar = document.querySelector('.draft-banner')
         if (!bar) return false
-        bar.querySelector('[data-a=drop]').click(); await T.sleep(400)
+        bar.querySelector('[data-a=drop]').click(); await T.sleep(300)
         return !document.querySelector('.draft-banner')`)
+      // 界面上的提示条先消失，磁盘上的草稿是异步删的：以磁盘为准
+      const f15bGone = await waitDraftGone('draft:' + draftDoc)
       await js(`window.__test.loadDoc({ path: null, name: 'x.md', content: '' }); await T.sleep(300); return true`)
       await loadFile(draftDoc)
       // 留出时间：如果草稿没清干净，提示条会在这段时间里重新出现
       const f15c = await js(`
         for (let i = 0; i < 12; i++) { await T.sleep(150); if (document.querySelector('.draft-banner')) return false }
         return true`)
+      const f15cGone = await waitDraftGone('draft:' + draftDoc, 300)
       check('AC-F15', '强制崩溃后重开同一文件：出现草稿提示，恢复后内容回来且为未保存；丢弃后不再出现',
-        draftFiles.length > 0 && f15.banner && f15.restored && f15.dirty && f15b && f15c, { draftFiles: draftFiles.length, ...f15, noBannerAfterDrop: f15c })
+        draftFiles.length > 0 && f15.banner && f15.restored && f15.dirty && f15b && f15bGone && f15c && f15cGone,
+        { draftFiles: draftFiles.length, ...f15, noBannerAfterDrop: f15c, draftGoneOnDisk: f15bGone && f15cGone, drafts: draftsOnDisk() })
 
       // AC-F17 保存到只读文件 → 错误对话框，内容保留、未保存标记不消失
       const roFile = path.join(tmpDir, '只读.md')
@@ -1600,6 +1916,7 @@ app.on('browser-window-created', (_e, win) => {
       // AC-N28 识别：指定的下一篇跨文件夹、自定义文字、不显示、#标题；没有属性区的按文件名
       const n28 = {}
       await loadFile(X('01-甲.md'))
+      n28.mode0 = await js(`return window.__test.state.mode`)
       n28.jia = await cards()
       const runs0 = await js(`return window.__test.pageTurn.stats.runs`)
       await menuKey('CmdOrCtrl+]')
@@ -1843,8 +2160,9 @@ app.on('browser-window-created', (_e, win) => {
       await js(`await window.__test.openFolder(${JSON.stringify(fresh)}); await T.sleep(400); return true`)
       const n13a = (await cur()).path
       await js(`await window.__test.openFolder(${JSON.stringify(emptyDir)}); await T.sleep(300); return true`)
-      const n13b = await js(`const t = document.querySelector('.toast.show'); return t ? t.textContent : null`)
-      check('AC-N13', '打开文件夹（无记录）打开第一篇；空文件夹提示「这个文件夹里没有 Markdown 文件」', n13a === path.join(fresh, 'a.md') && n13b === '这个文件夹里没有 Markdown 文件', { n13a, n13b })
+      const n13b = await js(`return { dir: window.__test.folderNav.nav.dir, empty: document.querySelector('#filesList .files-empty p')?.textContent || null }`)
+      check('AC-N13', '打开文件夹（无记录）打开第一篇；空文件夹作为篇目树打开（空状态见 AC-F20）',
+        n13a === path.join(fresh, 'a.md') && sameP(n13b.dir, emptyDir) && /还没有 Markdown 文件/.test(n13b.empty || ''), { n13a, ...n13b })
 
       // AC-N15 另存为到其他文件夹后，篇目切换
       await js(`await window.__test.gotoFile(${JSON.stringify(P('附录.md'))}); await T.sleep(300); return true`)
@@ -2268,20 +2586,20 @@ app.on('browser-window-created', (_e, win) => {
       const edit = (t) => js(`T.e().chain().focus('end').insertContent(${JSON.stringify(t)}).run(); await T.sleep(400); return true`)
 
       // AC-F08 新文档 Ctrl+S → 另存为对话框，默认名「未命名.md」
+      // 只覆盖「没有打开文件夹」的情况；已打开文件夹时直接存进该文件夹（AC-F22），先解除文件夹
+      await js(`await window.__test.folderNav.setDir(null); await T.sleep(200); return true`)
       fake.boxAnswer = 1 // 上一步留下的修改选择「不保存」
       await menuKey('CmdOrCtrl+N')
       await wait(300)
       await edit('新文档内容')
-      // 默认文件名「未命名.md」，位置为当前篇目所在的文件夹（设计规范 v1.3 §4.11）——保存前读取
-      const folderNow = await js(`return window.__test.folderNav.nav.dir`)
       fake.saveAnswer = path.join(tmpDir, '新文档.md')
       fake.save = []
       await menuKey('CmdOrCtrl+S')
       await wait(600)
       let d = await doc()
-      check('AC-F08', '新文档保存时弹出另存为，默认「未命名.md」并定位到当前文件夹，保存后显示新文件名',
-        fake.save[0] === path.join(folderNow, '未命名.md') && fs.existsSync(fake.saveAnswer) && d.name === '新文档.md' && !d.dirty,
-        { calls: fake.save, folderNow, name: d.name, dirty: d.dirty })
+      check('AC-F08', '没有打开文件夹时新文档保存弹出另存为，默认「未命名.md」，保存后显示新文件名',
+        fake.save[0] === '未命名.md' && fs.existsSync(fake.saveAnswer) && d.name === '新文档.md' && !d.dirty,
+        { calls: fake.save, name: d.name, dirty: d.dirty })
 
       // AC-F09 Ctrl+Shift+S 总是弹出；之后 Ctrl+S 写入新路径
       fake.saveAnswer = path.join(tmpDir, '另存.md')
@@ -2317,6 +2635,8 @@ app.on('browser-window-created', (_e, win) => {
       d = await doc()
       f10.discard = !d.dirty && d.md.trim() === '' && d.name === '未命名.md'
       await edit('要保存的内容')
+      // 这条走「没有打开文件夹」的保存框分支；打开文件夹时直接存入，见 AC-F22
+      await js(`await window.__test.folderNav.setDir(null); await T.sleep(200); return true`)
       fake.boxAnswer = 0
       fake.saveAnswer = path.join(tmpDir, 'f10.md')
       await menuKey('CmdOrCtrl+N')
@@ -2327,7 +2647,9 @@ app.on('browser-window-created', (_e, win) => {
       check('AC-F10', '未保存时新建/打开：取消不变、不保存丢弃、保存后继续', Object.values(f10).every(Boolean), f10)
 
       // AC-F11 有未保存修改时关闭窗口：取消 → 不关；保存但在另存为中取消 → 不关
+      // 同样按「没有打开文件夹」测保存框（打开文件夹时新文档直接存入，见 AC-F22）
       const f11 = {}
+      await js(`await window.__test.folderNav.setDir(null); await T.sleep(200); return true`)
       await edit('关闭测试')
       fake.box = []
       fake.boxAnswer = 2

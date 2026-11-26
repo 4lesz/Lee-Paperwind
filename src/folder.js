@@ -18,7 +18,7 @@ export const dirOfPath = (p) => (p ? p.replace(/[\\/][^\\/]*$/, '') : null)
 // p 是否在文件夹 root 之内（含 root 本身）
 export const isWithin = (p, root) => !!p && !!root && (norm(p) === norm(root) || norm(p).startsWith(norm(root) + '\\'))
 
-export function createFolderNav({ api, listEl, footEl, pagerEl, getCurrent, onOpen, onOpenFolder, onListed, getIndex, isEditing, onTurn, onEditIndex, onMissing }) {
+export function createFolderNav({ api, listEl, footEl, pagerEl, getCurrent, onOpen, onOpenFolder, onListed, getIndex, isEditing, onTurn, onEditIndex, onMissing, onNew, onRename }) {
   // dir：树的根；files：树里全部文章（按树的顺序）；tree：根下的条目
   const nav = { dir: null, name: '', files: [], tree: [], truncated: false }
   const expanded = new Set() // 手动展开的文件夹（本次运行期间保持）
@@ -141,19 +141,84 @@ export function createFolderNav({ api, listEl, footEl, pagerEl, getCurrent, onOp
             li.className = 'file-item' + (current ? ' current' : '')
             li.innerHTML = `${label}${current && cur.dirty ? '<span class="file-dot"></span>' : ''}`
             li.onclick = () => !current && onOpen(c.path)
+            li.oncontextmenu = (e) => {
+              e.preventDefault()
+              openFileMenu(e, c.path)
+            }
             items.push(li)
           }
         }
       }
       build(nav.tree, 0)
       listEl.replaceChildren(...items)
-      if (!nav.files.length) listEl.innerHTML = `<li class="files-empty"><p>这个文件夹里没有 Markdown 文件</p></li>`
+      if (!nav.files.length) {
+        // 空文件夹也能直接开工（PRD §3.6 v0.7）
+        listEl.innerHTML = `<li class="files-empty"><p>这个文件夹里还没有 Markdown 文件</p><button class="btn" type="button" data-new-file>新建一篇</button></li>`
+        listEl.querySelector('[data-new-file]').onclick = () => onNew?.()
+      }
       footEl.hidden = false
       footEl.innerHTML = `<span class="folder-icon">${icons.folder}</span><span class="folder-name">${escapeHtml(nav.name)}</span>`
       footEl.title = nav.dir
     }
+    if (renaming) mountRename()
     listEl.querySelector('.current')?.scrollIntoView({ block: 'nearest' })
     renderPager()
+  }
+
+  // ---- 右键菜单 / 就地改名（PRD §3.1 v0.10）----
+  let renaming = null // 正在就地改名的文件路径
+  function closeFileMenu() {
+    document.querySelector('.files-menu')?.remove()
+  }
+  function openFileMenu(e, p) {
+    closeFileMenu()
+    const menu = document.createElement('div')
+    menu.className = 'files-menu'
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.textContent = '重命名'
+    b.onclick = () => {
+      closeFileMenu()
+      renaming = p
+      render()
+    }
+    menu.append(b)
+    document.body.append(menu)
+    menu.style.left = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 8) + 'px'
+    menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8) + 'px'
+    setTimeout(() => document.addEventListener('mousedown', closeFileMenu, { once: true }), 0)
+  }
+  function mountRename() {
+    const p = renaming
+    renaming = null
+    const li = [...listEl.querySelectorAll('.file-item')].find((x) => sameFile(x.dataset.path, p))
+    if (!li) return
+    const input = document.createElement('input')
+    input.className = 'file-rename'
+    input.value = li.title.replace(/\.(md|markdown|mdown|mkd|txt)$/i, '')
+    input.setAttribute('aria-label', '重命名')
+    li.replaceChildren(input)
+    input.focus()
+    input.select()
+    let done = false
+    const finish = async (commit) => {
+      if (done) return
+      done = true
+      const v = input.value.trim()
+      if (commit && v) await onRename?.(p, v)
+      render()
+    }
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        finish(true)
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        finish(false)
+      }
+    })
+    input.addEventListener('blur', () => finish(true))
   }
 
   // 翻页目标：属性区里指定的优先（§4.13b），否则按同一文件夹内的文件名顺序（§4.13）
