@@ -9,6 +9,8 @@ import { findHeading, scrollToPos, capturePosition, restorePosition } from './po
 import { Selection } from '@tiptap/pm/state'
 import { createPageTurn } from './page-turn.js'
 import { createLinkBurst } from './link-burst.js'
+import { createJumpFx } from './jump-fx.js'
+import { createSettings, getJumpEffect } from './settings.js'
 import { createFind } from './find.js'
 
 const api = window.api
@@ -700,6 +702,9 @@ const linkBurst = createLinkBurst({
   getExcludes: fxExcludes,
   isSettled: () => !state.restoring,
 })
+// 设置里可选的新动效（§6.6c）：卷纸翻书、墨迹晕散、风吹纸页、轻盈淡入
+const jumpFx = createJumpFx({ api, paperEl, sheetEl: document.querySelector('.sheet'), contentEl: $('editor'), getExcludes: fxExcludes })
+const settings = createSettings()
 
 // 翻页方向：按篇目顺序，往后翻为 1、往前翻为 -1；不在同一篇目列表中时为 0（不播放）
 function turnDirection(from, p) {
@@ -733,11 +738,25 @@ async function gotoFile(p, { hash = '', mode = null, turn = true, root = null, d
       if (mode && mode !== state.mode) applyMode(mode)
       loadDoc(doc, { hash, root })
     }
+    if (!turn) {
+      pageTurn.finish()
+      linkBurst.finish()
+      jumpFx.finish()
+      return show()
+    }
+    const fx = getJumpEffect()
     // 文中链接用链接跳转动效（同文件夹、跨文件夹都播放）；其余按翻页动效
-    if (effect === 'burst' && turn) {
+    if (fx !== 'classic') {
+      // 设置里选了新动效：翻页和链接共用，链接按「往后翻」播放
+      pageTurn.finish()
+      linkBurst.finish()
+      await jumpFx.run({ effect: fx, kind: effect === 'burst' ? 'link' : 'turn', dir: effect === 'burst' ? 1 : dir, load: show })
+    } else if (effect === 'burst') {
+      jumpFx.finish()
       pageTurn.finish()
       await linkBurst.run(show)
     } else {
+      jumpFx.finish()
       linkBurst.finish()
       await pageTurn.run(dir, show)
     }
@@ -1125,6 +1144,8 @@ async function runCommand(cmd) {
       return goSide('next')
     case 'theme':
       return toggleTheme()
+    case 'settings':
+      return settings.open()
     case 'editLink':
       return ctx.editLink()
     case 'unlink':
@@ -1230,4 +1251,4 @@ syncThemeIcon()
 document.body.dataset.mode = 'edit'
 loadDoc({})
 // 自测脚本使用的调试入口
-window.__test = { loadDoc, state, gotoFile, openFolder, folderNav, handleLink, pageTurn, linkBurst, editIndex, applyIndex, goSide, relLink, joinPath, save, find }
+window.__test = { loadDoc, state, gotoFile, openFolder, folderNav, handleLink, pageTurn, linkBurst, jumpFx, editIndex, applyIndex, goSide, relLink, joinPath, save, find }

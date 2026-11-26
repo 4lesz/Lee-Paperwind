@@ -1749,6 +1749,154 @@ app.on('browser-window-created', (_e, win) => {
           !n37.reducedCanvas && n37.reduced.last.reduced && n37.reduced.path === P('01-开篇.md') && clean(n37.reduced),
         n37)
 
+      // AC-N39 设置入口（§6.6c）：齿轮 → 设置弹窗，动效 5 个选项、默认经典，选择即保存
+      await js(`localStorage.removeItem('jumpEffect'); T.click('.titlebar [data-cmd=settings]'); await T.sleep(250); return true`)
+      const n39 = {
+        open: await js(`const m = document.querySelector('.settings-modal')
+          return { open: !!m, title: m?.querySelector('.modal-title')?.textContent,
+            rows: [...document.querySelectorAll('.setting-row')].map(r => r.dataset.effect),
+            on: document.querySelector('.setting-row.on')?.dataset.effect }`),
+      }
+      await js(`document.querySelector('.setting-row[data-effect=curl]').click(); await T.sleep(80); return true`)
+      n39.pick = await js(`return { on: document.querySelector('.setting-row.on')?.dataset.effect, saved: localStorage.getItem('jumpEffect') }`)
+      await js(`document.querySelector('.settings-modal .btn.primary').click(); await T.sleep(200); return true`)
+      n39.closed = await js(`return !document.querySelector('.settings-modal')`)
+      await js(`T.click('.titlebar [data-cmd=settings]'); await T.sleep(250); document.querySelector('.settings-modal').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await T.sleep(200); return true`)
+      n39.esc = await js(`return !document.querySelector('.settings-modal')`)
+      check('AC-N39', '设置入口：标题栏齿轮打开「设置」，动效 5 个选项、默认经典；点「卷纸翻书」立即写入偏好；「完成」/ Esc 关闭',
+        n39.open.open && n39.open.title === '设置' && n39.open.rows.join(',') === 'classic,curl,ink,wind,fade' && n39.open.on === 'classic' &&
+          n39.pick.on === 'curl' && n39.pick.saved === 'curl' && n39.closed && n39.esc, n39)
+
+      // AC-N40 四种新动效（§6.6c）：往后翻 / 往前翻 / 链接跳转都播放；方向正确；结束后无覆盖层
+      const fxStats = () => js(`const s = window.__test.jumpFx.stats, l = s.last
+        return { runs: s.runs, path: window.__test.state.path,
+          last: l && { effect: l.effect, kind: l.kind, dir: l.dir, startMs: l.startMs, captureMs: l.captureMs, reduced: l.reduced },
+          canvases: document.querySelectorAll('.page-turn-canvas').length,
+          opacity: getComputedStyle(document.getElementById('editor')).opacity,
+          transform: getComputedStyle(document.getElementById('editor')).transform }`)
+      const fxIds = ['curl', 'ink', 'wind', 'fade']
+      const n40 = {}
+      for (const id of fxIds) {
+        await js(`localStorage.setItem('jumpEffect', '${id}'); await window.__test.gotoFile(${JSON.stringify(P('01-开篇.md'))}, { turn: false }); await T.sleep(450); return true`)
+        const b = await fxStats()
+        await js(`T.click('#pager .next'); return true`)
+        const mid = id === 'fade'
+          ? null
+          : await js(`for (let i = 0; i < 40; i++) { if (document.querySelector('.page-turn-canvas')) return true; await T.sleep(10) } return false`)
+        await wait(350)
+        await shot(`设置动效-${id}`)
+        await wait(900)
+        const next = await fxStats()
+        await js(`T.click('#pager .prev'); return true`)
+        await wait(1200)
+        const prev = await fxStats()
+        await js(`await window.__test.gotoFile(${JSON.stringify(P('01-开篇.md'))}, { turn: false }); await T.sleep(450); return true`)
+        await clickLink('第二章', ['control'])
+        await wait(1000)
+        const link = await fxStats()
+        n40[id] = { b, mid, next, prev, link }
+      }
+      const fxClean = (r) => r.canvases === 0 && r.opacity === '1' && (r.transform === 'none' || r.transform === 'matrix(1, 0, 0, 1, 0, 0)')
+      check('AC-N40', '四种新动效：卷纸翻书 / 墨迹晕散 / 风吹纸页 / 轻盈淡入在往后翻、往前翻、链接跳转都播放；方向正确；结束后无覆盖层、正文复位',
+        fxIds.every((id) => {
+          const e = n40[id]
+          return (id === 'fade' || e.mid) && e.next.runs === e.b.runs + 1 && e.next.last?.effect === id && e.next.last?.kind === 'turn' && e.next.last?.dir === 1 &&
+            e.next.last?.startMs <= 100 && e.next.path === P('02-第二章.md') && fxClean(e.next) &&
+            e.prev.last?.effect === id && e.prev.last?.dir === -1 && e.prev.path === P('01-开篇.md') && fxClean(e.prev) &&
+            e.link.last?.effect === id && e.link.last?.kind === 'link' && e.link.last?.dir === 1 && e.link.path === P('02-第二章.md') && fxClean(e.link)
+        }), n40)
+
+      // AC-N43 首帧不闪 + 方向（§6.6c）：150ms 时旧页仍覆盖 ≥60%；卷纸 / 风吹按方向左右分明
+      const fxPixels = `
+        const c = document.querySelector('.page-turn-canvas')
+        if (!c) return null
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+        let L = 0, Ln = 0, R = 0, Rn = 0
+        for (let y = 0; y < c.height; y += 16) for (let x = 0; x < c.width; x += 16) {
+          const on = d[(y * c.width + x) * 4 + 3] > 8 ? 1 : 0
+          if (x < c.width / 2) { L += on; Ln++ } else { R += on; Rn++ }
+        }
+        return { left: L / Ln, right: R / Rn, all: (L + R) / (Ln + Rn) }`
+      // 逐帧采样：画布存在期间每帧把定格画面缩到 64×64 求平均不透明度，
+      // 用来抓「画布还在、但整页被清空」的那一帧（AC-N44）
+      const monStart = `
+        window.__monStop = false
+        window.__mon = []
+        const tiny = document.createElement('canvas')
+        tiny.width = tiny.height = 64
+        const tg = tiny.getContext('2d', { willReadFrequently: true })
+        const loop = () => {
+          const c = document.querySelector('.page-turn-canvas')
+          if (c) {
+            tg.clearRect(0, 0, 64, 64)
+            tg.drawImage(c, 0, 0, 64, 64)
+            const d = tg.getImageData(0, 0, 64, 64).data
+            let s = 0
+            for (let i = 3; i < d.length; i += 4) s += d[i]
+            window.__mon.push({ t: performance.now(), a: s / (64 * 64 * 255) })
+          }
+          if (!window.__monStop) requestAnimationFrame(loop)
+        }
+        requestAnimationFrame(loop)
+        return true`
+      const monStop = `
+        window.__monStop = true
+        const m = window.__mon
+        window.__mon = []
+        if (!m.length) return null
+        const t0 = m[0].t
+        const early = m.filter((x) => x.t - t0 <= 150)
+        return { frames: m.length, early: early.length, min: Math.min(...early.map((x) => x.a)) }`
+      const n43 = {}
+      for (const id of ['curl', 'ink', 'wind']) {
+        const r = {}
+        await js(`localStorage.setItem('jumpEffect', '${id}'); await window.__test.gotoFile(${JSON.stringify(P('02-第二章.md'))}, { turn: false }); await T.sleep(450); ${monStart}`)
+        r.prevEarly = await js(`T.click('#pager .prev'); await T.sleep(150); ${fxPixels}`)
+        r.prevMid = await js(`await T.sleep(200); ${fxPixels}`)
+        await wait(1400)
+        r.prevMon = await js(`${monStop}`)
+        r.prevClean = (await fxStats()).canvases === 0
+        await js(`await window.__test.gotoFile(${JSON.stringify(P('01-开篇.md'))}, { turn: false }); await T.sleep(400); ${monStart}`)
+        r.nextEarly = await js(`T.click('#pager .next'); await T.sleep(150); ${fxPixels}`)
+        r.nextMid = await js(`await T.sleep(200); ${fxPixels}`)
+        await wait(1400)
+        r.nextMon = await js(`${monStop}`)
+        r.nextClean = (await fxStats()).canvases === 0
+        n43[id] = r
+      }
+      const earlyOk = (s) => !!s && s.all >= 0.6
+      const lopsided = (s, side, m = 0.15) => !!s && s[side] > s[side === 'left' ? 'right' : 'left'] + m
+      check('AC-N43', '首帧不闪 + 方向：动效开始后 150ms 旧页仍覆盖 ≥60% 正文；卷纸 / 风吹往后翻右半先让开、往前翻左半先让开',
+        ['curl', 'ink', 'wind'].every((id) => earlyOk(n43[id].prevEarly) && earlyOk(n43[id].nextEarly) && n43[id].prevClean && n43[id].nextClean) &&
+          lopsided(n43.curl.nextMid, 'left') && lopsided(n43.curl.prevMid, 'right') &&
+          lopsided(n43.wind.nextMid, 'left', 0.12) && lopsided(n43.wind.prevMid, 'right', 0.12), n43)
+
+      // AC-N44 首帧不闪（§6.6c）：画布出现后的头 150ms 内，定格旧页每帧都不能整块消失
+      const minOk = (s) => !!s && s.early >= 2 && s.min >= 0.6
+      check('AC-N44', '卷纸翻书 / 墨迹晕散 / 风吹纸页：往后翻、往前翻时，画布出现后头 150ms 内旧页每帧覆盖率都 ≥ 60%（不会闪一下新页）',
+        ['curl', 'ink', 'wind'].every((id) => minOk(n43[id].prevMon) && minOk(n43[id].nextMon)),
+        Object.fromEntries(['curl', 'ink', 'wind'].map((id) => [id, { prev: n43[id].prevMon, next: n43[id].nextMon }])))
+
+      // AC-N41 减少动态效果：四种特效都不截图、不产生覆盖层，只淡入
+      const dbg41 = win.webContents.debugger
+      dbg41.attach('1.3')
+      await dbg41.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
+      const n41 = {}
+      for (const id of fxIds) {
+        await js(`localStorage.setItem('jumpEffect', '${id}'); await window.__test.gotoFile(${JSON.stringify(P('01-开篇.md'))}, { turn: false }); await T.sleep(350); return true`)
+        const b = await fxStats()
+        await js(`T.click('#pager .next'); return true`)
+        const canvas = await js(`for (let i = 0; i < 40; i++) { if (document.querySelector('.page-turn-canvas')) return true; await T.sleep(10) } return false`)
+        await wait(450)
+        const a = await fxStats()
+        n41[id] = { canvas, ran: a.runs === b.runs + 1, reduced: a.last?.reduced, path: a.path, clean: a.canvases === 0 && a.opacity === '1' }
+      }
+      await dbg41.sendCommand('Emulation.setEmulatedMedia', { features: [] })
+      dbg41.detach()
+      await js(`localStorage.setItem('jumpEffect', 'classic'); await window.__test.gotoFile(${JSON.stringify(P('01-开篇.md'))}, { turn: false }); await T.sleep(300); return true`)
+      check('AC-N41', '减少动态效果：四种特效都不截图、不产生覆盖层，只淡入',
+        fxIds.every((id) => !n41[id].canvas && n41[id].ran && n41[id].reduced && n41[id].path === P('02-第二章.md') && n41[id].clean), n41)
+
       // AC-N10 有未保存修改时跳转：取消 / 不保存 / 保存
       const n10 = {}
       await js(`T.e().chain().focus('end').insertContent('跳转前的修改').run(); await T.sleep(400); return true`)
